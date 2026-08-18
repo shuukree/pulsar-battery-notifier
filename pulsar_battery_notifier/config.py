@@ -15,7 +15,7 @@ from pathlib import Path
 APP_NAME = "PulsarBatteryNotifier"
 
 DEFAULT_THRESHOLDS = [20, 15, 10, 5, 1]
-DEFAULT_POLL_SECONDS = 60
+DEFAULT_POLL_SECONDS = 30
 
 
 def config_dir() -> Path:
@@ -53,8 +53,8 @@ class Settings:
         mode = self.connection_mode if self.connection_mode in {"auto", "wireless", "wired"} else "auto"
         return Settings(
             thresholds=thresholds,
-            poll_seconds=max(10, int(self.poll_seconds)),
-            wake_poll_seconds=max(5, int(self.wake_poll_seconds)),
+            poll_seconds=max(2, int(self.poll_seconds)),
+            wake_poll_seconds=max(2, int(self.wake_poll_seconds)),
             rearm_hysteresis=max(1, int(self.rearm_hysteresis)),
             beep=bool(self.beep),
             stale_grace_seconds=max(60, int(self.stale_grace_seconds)),

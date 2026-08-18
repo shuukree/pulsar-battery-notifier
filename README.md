@@ -98,7 +98,7 @@ settings**.
 ```json
 {
   "thresholds": [20, 15, 10, 5, 1],
-  "poll_seconds": 60,
+  "poll_seconds": 30,
   "wake_poll_seconds": 12,
   "rearm_hysteresis": 3,
   "beep": true,
@@ -111,9 +111,14 @@ settings**.
 
 - **thresholds** — battery % levels to alert on. Any list works, e.g.
   `[30, 10]`.
-- **poll_seconds** — how often to check while the mouse is awake (minimum 10).
+- **poll_seconds** — how often to check while the mouse is awake (minimum 2).
+  Lower = more responsive to plug/unplug, at the cost of a little more USB/CPU
+  chatter. Try `5` (or even `3`) if you want near-instant charging updates.
 - **wake_poll_seconds** — faster interval used while the mouse is asleep/unknown,
-  so it notices the mouse waking within a few seconds (minimum 5).
+  so it notices the mouse waking within a few seconds (minimum 2).
+
+For an on-demand refresh any time, use the tray's **Check now** — it reads
+immediately.
 - **rearm_hysteresis** — a level only re-arms once the battery climbs this many
   points back above it, so a reading hovering on a threshold won't re-fire.
 - **stale_grace_seconds** — how long to keep showing the last reading while the
