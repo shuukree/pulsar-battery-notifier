@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true", help="print battery once and exit")
     parser.add_argument("--list-devices", action="store_true", help="list Pulsar HID interfaces")
     parser.add_argument("--settings", action="store_true", help="open the settings window")
+    parser.add_argument("--panel", action="store_true", help="open the live battery panel")
     parser.add_argument("--history", action="store_true", help="render + open the battery history chart")
     parser.add_argument("--mode", choices=["auto", "wireless", "wired"], help="override connection mode")
     args = parser.parse_args(argv)
@@ -37,6 +38,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.settings:
         from pulsar_battery_notifier.gui import run_settings
         run_settings()
+        return 0
+
+    if args.panel:
+        from pulsar_battery_notifier.gui import run_panel
+        run_panel()
         return 0
 
     if args.history:

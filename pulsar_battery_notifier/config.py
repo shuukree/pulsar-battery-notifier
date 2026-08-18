@@ -37,6 +37,10 @@ def battery_log_path() -> Path:
     return config_dir() / "battery_log.json"
 
 
+def state_path() -> Path:
+    return config_dir() / "state.json"
+
+
 @dataclass
 class Settings:
     thresholds: list[int] = field(default_factory=lambda: list(DEFAULT_THRESHOLDS))

@@ -2,13 +2,15 @@
 
 <img src="assets/app.png" alt="Pulsar Battery Notifier icon" width="96" align="right">
 
-A tiny Windows background app that watches your **Pulsar X2 Crazylight** mouse
-battery and pops a toast (plus a beep) as it drops past thresholds you choose —
-by default **20%, 15%, 10%, 5%, and 1%**. It runs quietly in the system tray
-alongside Pulsar Fusion; it does not replace it.
+A tiny Windows background app that watches your **Pulsar mouse** battery —
+wireless or wired — and pops a toast (plus a beep) as it drops past thresholds
+you choose, by default **20%, 15%, 10%, 5%, and 1%**. It shows the live level
+right on the tray icon, and clicking it opens a small graph panel in the corner.
+It runs quietly alongside Pulsar Fusion; it does not replace it.
 
-Reads the battery straight from the wireless dongle over HID, so it works
-whether or not the official app is open.
+Reads the battery straight from the dongle (or the wired mouse) over HID, so it
+works whether or not the official app is open. Tested on the **Pulsar X2
+Crazylight**; other Pulsar models using the same vendor protocol work too.
 
 ## Why
 
@@ -33,11 +35,13 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
   discharge slope. Toggle it from the tray menu.
 - **Fully-charged alert** — an optional toast when charging completes, so you
   know when to unplug. Fires once per charge cycle.
-- **Battery history graph** — a **Battery history…** tray item renders a chart
-  of the last 24h (charging spans highlighted) and opens it.
-- **Settings window** — a **Settings…** tray item opens a small editor for
-  thresholds, intervals and toggles; changes apply live (no restart).
-- Config is a plain JSON file you can hand-edit; reload from the tray.
+- **Live panel** — left-click the tray icon (or **Battery history**) to open a
+  themed panel in the corner with a dynamic graph that updates in place
+  (charging spans highlighted), plus a 6h/24h range toggle.
+- **Settings window** — a **Settings…** tray item opens a themed, sectioned
+  editor for thresholds, intervals and toggles; changes apply live (no restart).
+- Edit settings in the **Settings** window, or hand-edit the JSON — either way
+  changes apply live (the app watches the file).
 - **Built-in updater**: checks GitHub for new releases in the background and
   offers a one-click **Check for updates** in the tray menu that downloads and
   launches the latest installer.

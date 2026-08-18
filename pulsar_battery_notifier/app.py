@@ -10,10 +10,10 @@ Two entry points:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -22,7 +22,7 @@ from functools import lru_cache
 from . import __version__, config, notifications, updates
 from .device import BatteryStatus, DeviceNotFound, read_battery
 from .estimate import RuntimeEstimator, format_hours, load_history, save_history
-from .history import BatteryLog, render_chart
+from .history import BatteryLog
 from .thresholds import ThresholdEngine
 
 
@@ -141,9 +141,32 @@ class Notifier:
                 reading = Reading(None, False, False, device_present, now)
 
         self._latest = reading
+        self._write_state(reading)
         if self._on_update is not None:
             self._on_update(reading)
         return reading
+
+    def _write_state(self, reading: Reading) -> None:
+        """Publish the latest reading for the live panel (separate process)."""
+        est = None
+        if reading.percent is not None and not reading.charging:
+            est = self.estimator.hours_remaining()
+        payload = {
+            "percent": reading.percent,
+            "charging": reading.charging,
+            "fresh": reading.fresh,
+            "device_present": reading.device_present,
+            "at": reading.at,
+            "estimate_hours": est,
+        }
+        try:
+            path = config.state_path()
+            tmp = f"{path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
 
     def _check_full(self, status: BatteryStatus) -> None:
         """Fire a 'battery full' toast once per charge cycle, only after we've
@@ -302,6 +325,26 @@ def _taskbar_is_light() -> bool:
     return light
 
 
+def _enable_dark_menus() -> None:
+    """Best-effort: ask Windows to render this process's menus in dark mode.
+
+    Native tray (right-click) menus can't be fully themed via pystray; this
+    undocumented uxtheme call darkens them on Windows 10 1809+ when it works,
+    and is a harmless no-op otherwise.
+    """
+    try:
+        import ctypes
+
+        uxtheme = ctypes.windll.uxtheme
+        set_preferred = uxtheme[135]  # SetPreferredAppMode ordinal
+        set_preferred.argtypes = [ctypes.c_int]
+        set_preferred.restype = ctypes.c_int
+        set_preferred(1)  # AllowDark
+        uxtheme[136]()    # FlushMenuThemes
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _level_key(reading: Reading) -> str:
     """'charging' | 'green' | 'orange' | 'red' | 'grey' for the current state."""
     if reading.percent is not None and reading.charging:
@@ -384,11 +427,10 @@ def run_tray(settings: config.Settings) -> None:
         run_headless(settings)
         return
 
-    notifier = Notifier(settings)
+    if not _taskbar_is_light():
+        _enable_dark_menus()
 
-    def on_check_now(icon, item):
-        reading = notifier.poll_once()
-        notifications.notify_text("Pulsar Battery", status_text(reading))
+    notifier = Notifier(settings)
 
     def on_open_config(icon, item):
         folder = str(config.config_dir())
@@ -397,29 +439,25 @@ def run_tray(settings: config.Settings) -> None:
         except AttributeError:
             subprocess.Popen(["xdg-open", folder])
 
-    def _spawn_self(*args: str) -> None:
-        """Relaunch our own program with extra CLI args (e.g. --settings)."""
+    _panel_proc = {"p": None}
+
+    def _spawn_self(*args: str):
+        """Relaunch our own program with extra CLI args (e.g. --panel)."""
         try:
             if getattr(sys, "frozen", False):
-                subprocess.Popen([sys.executable, *args])
-            else:
-                subprocess.Popen([sys.executable, os.path.abspath(sys.argv[0]), *args])
+                return subprocess.Popen([sys.executable, *args])
+            return subprocess.Popen([sys.executable, os.path.abspath(sys.argv[0]), *args])
         except Exception:  # noqa: BLE001
-            pass
+            return None
 
     def on_settings(icon, item):
         _spawn_self("--settings")
 
-    def on_history(icon, item):
-        def work() -> None:
-            try:
-                out = os.path.join(tempfile.gettempdir(), "pulsar_battery_history.png")
-                render_chart(notifier.log.samples(), out, hours=24)
-                os.startfile(out)  # type: ignore[attr-defined]  # Windows only
-            except Exception as exc:  # noqa: BLE001
-                notifications.notify_text("Battery history", f"Couldn't render chart: {exc}")
-
-        threading.Thread(target=work, daemon=True).start()
+    def on_panel(icon, item):
+        p = _panel_proc["p"]
+        if p is not None and p.poll() is None:
+            return  # panel already open
+        _panel_proc["p"] = _spawn_self("--panel")
 
     def on_reload(icon, item):
         new_settings = config.load()
@@ -430,15 +468,6 @@ def run_tray(settings: config.Settings) -> None:
         notifications.notify_text(
             "Pulsar Battery", f"Reloaded settings: thresholds {new_settings.thresholds}"
         )
-
-    def on_toggle_estimate(icon, item):
-        notifier.settings.show_time_estimate = not notifier.settings.show_time_estimate
-        try:
-            config.save(notifier.settings)
-        except Exception:  # noqa: BLE001
-            pass
-        _refresh_menu()
-        on_update(notifier.latest)  # refresh the tooltip right away
 
     def on_quit(icon, item):
         notifier.stop()
@@ -573,20 +602,12 @@ def run_tray(settings: config.Settings) -> None:
         icon=_make_icon_image(notifier.latest),
         title="Pulsar Battery Notifier",
         menu=pystray.Menu(
-            pystray.MenuItem(title_text, None, enabled=False),
+            pystray.MenuItem(title_text, on_panel, default=True),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Check now", on_check_now),
-            pystray.MenuItem("Battery history…", on_history),
-            pystray.MenuItem(
-                "Show time estimate", on_toggle_estimate,
-                checked=lambda item: notifier.settings.show_time_estimate,
-            ),
+            pystray.MenuItem("Battery history", on_panel),
+            pystray.MenuItem(update_label, on_check_updates),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Settings…", on_settings),
-            pystray.MenuItem(update_label, on_check_updates),
-            pystray.MenuItem("Open config folder", on_open_config),
-            pystray.MenuItem("Reload settings", on_reload),
-            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", on_quit),
         ),
     )
