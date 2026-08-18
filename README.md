@@ -122,10 +122,16 @@ settings**.
 ## Updating
 
 The app checks for new releases on startup and once a day. When one is found it
-shows a toast and the tray menu changes to **Update to vX.Y.Z**. Click it (or
-**Check for updates** any time) and it downloads the latest installer and runs
-it — the install upgrades in place. You can turn the background check off with
-`"auto_update_check": false`.
+shows a toast and the tray menu changes to **Update to vX.Y.Z**.
+
+Clicking **Check for updates** (or the update item) opens a dialog:
+
+- Up to date → an info box confirming you're on the latest version.
+- Update available → a **Yes/No** box showing installed vs. latest; choose
+  **Yes** and it downloads the installer, tells you it's ready, then launches it
+  and closes the app so the upgrade can finish in place.
+
+Turn the background check off with `"auto_update_check": false`.
 
 ## Auto-start on login
 

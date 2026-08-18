@@ -196,6 +196,34 @@ def _make_icon_image(reading: Reading):
     return img
 
 
+# -- native modal dialogs (Windows MessageBox) -----------------------------
+
+_MB_OK = 0x00000000
+_MB_YESNO = 0x00000004
+_MB_ICONERROR = 0x00000010
+_MB_ICONQUESTION = 0x00000020
+_MB_ICONINFO = 0x00000040
+_MB_TOPMOST = 0x00040000
+_MB_SETFOREGROUND = 0x00010000
+_IDYES = 6
+
+
+def _message_box(title: str, text: str, style: int = _MB_OK) -> int | None:
+    """Show a native modal dialog and return the clicked button id.
+
+    Safe to call from a worker thread (MessageBox pumps its own modal loop).
+    Falls back to a toast on non-Windows / if user32 is unavailable.
+    """
+    try:
+        import ctypes
+
+        flags = style | _MB_TOPMOST | _MB_SETFOREGROUND
+        return int(ctypes.windll.user32.MessageBoxW(0, text, title, flags))  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - non-Windows or no user32
+        notifications.notify_text(title, text)
+        return None
+
+
 def run_tray(settings: config.Settings) -> None:
     try:
         import pystray
@@ -237,53 +265,51 @@ def run_tray(settings: config.Settings) -> None:
 
     def update_label(_item=None) -> str:
         if notifier._update is not None:
-            return f"Update to v{notifier._update.latest}"
-        return "Check for updates"
+            return f"Update to v{notifier._update.latest}…"
+        return "Check for updates…"
 
-    def _update_flow(icon) -> None:
-        """Check GitHub and, if a newer release exists, download + launch it."""
-        notifications.notify_text("Pulsar Battery Notifier", "Checking for updates…")
+    def _refresh_menu() -> None:
         try:
-            info = updates.check_for_update(__version__)
-        except Exception as exc:  # noqa: BLE001 - network/parse errors
-            notifications.notify_text(
-                "Update check failed", str(exc) or "Could not reach GitHub."
-            )
-            return
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            pass
 
-        if not info.available:
-            notifier._update = None
-            _refresh_menu(icon)
-            notifications.notify_text(
-                "Pulsar Battery Notifier", f"You're up to date (v{info.current})."
-            )
-            return
-
-        notifier._update = info
-        _refresh_menu(icon)
-
+    def _download_and_install(info: updates.UpdateInfo) -> None:
+        """Download the installer, tell the user, launch it, and quit."""
         if not info.setup_url:
-            notifications.notify_text(
-                "Update available", f"v{info.latest} — opening the download page."
+            _message_box(
+                "Update",
+                f"Version v{info.latest} is available, but no installer was found "
+                "in the release. Opening the download page instead.",
+                _MB_OK | _MB_ICONINFO,
             )
             updates.open_release_page(info.release_url)
             return
 
-        notifications.notify_text(
-            "Pulsar Battery Notifier", f"Downloading v{info.latest}…"
-        )
+        try:
+            icon.title = f"Pulsar Battery — downloading v{info.latest}…"
+        except Exception:  # noqa: BLE001
+            pass
         try:
             path = updates.download(
                 info.setup_url, info.setup_name or "PulsarBatteryNotifier-Setup.exe"
             )
         except Exception as exc:  # noqa: BLE001
-            notifications.notify_text("Update download failed", str(exc))
+            _message_box(
+                "Download failed",
+                f"Couldn't download the update:\n\n{exc}\n\n"
+                "Opening the download page instead.",
+                _MB_OK | _MB_ICONERROR,
+            )
             updates.open_release_page(info.release_url)
             return
 
-        notifications.notify_text(
-            "Pulsar Battery Notifier",
-            f"Installing v{info.latest}. The app will close to finish updating.",
+        _message_box(
+            "Update ready",
+            f"Downloaded v{info.latest}.\n\n"
+            "The installer will open now, and Pulsar Battery Notifier will close "
+            "to finish updating.",
+            _MB_OK | _MB_ICONINFO,
         )
         updates.launch(path)
         # Quit so our exe unlocks for the installer to overwrite it.
@@ -293,16 +319,45 @@ def run_tray(settings: config.Settings) -> None:
         except Exception:  # noqa: BLE001
             pass
 
-    def on_check_updates(icon, item):
-        threading.Thread(target=_update_flow, args=(icon,), daemon=True).start()
-
-    def _refresh_menu(icon) -> None:
+    def _manual_check() -> None:
+        """Menu-triggered check: always ends in a clear modal dialog."""
         try:
-            icon.update_menu()
-        except Exception:  # noqa: BLE001
-            pass
+            info = updates.check_for_update(__version__)
+        except Exception as exc:  # noqa: BLE001 - network/parse errors
+            _message_box(
+                "Update check failed",
+                f"Couldn't reach GitHub to check for updates:\n\n{exc}",
+                _MB_OK | _MB_ICONERROR,
+            )
+            return
 
-    def _auto_update_loop(icon) -> None:
+        if not info.available:
+            notifier._update = None
+            _refresh_menu()
+            _message_box(
+                "You're up to date",
+                f"Pulsar Battery Notifier v{info.current} is the latest version.",
+                _MB_OK | _MB_ICONINFO,
+            )
+            return
+
+        notifier._update = info
+        _refresh_menu()
+        resp = _message_box(
+            "Update available",
+            "A new version of Pulsar Battery Notifier is available.\n\n"
+            f"Installed:\tv{info.current}\n"
+            f"Latest:\t\tv{info.latest}\n\n"
+            "Download and install it now?",
+            _MB_YESNO | _MB_ICONQUESTION,
+        )
+        if resp == _IDYES:
+            _download_and_install(info)
+
+    def on_check_updates(icon, item):
+        threading.Thread(target=_manual_check, daemon=True).start()
+
+    def _auto_update_loop() -> None:
         if not notifier.settings.auto_update_check:
             return
         # Small delay so we don't compete with startup.
@@ -313,7 +368,7 @@ def run_tray(settings: config.Settings) -> None:
                 info = updates.check_for_update(__version__)
                 if info.available:
                     notifier._update = info
-                    _refresh_menu(icon)
+                    _refresh_menu()
                     if not notifier._update_notified:
                         notifier._update_notified = True
                         notifications.notify_text(
@@ -321,6 +376,10 @@ def run_tray(settings: config.Settings) -> None:
                             f"Update available: v{info.latest}. "
                             "Open the tray menu to install it.",
                         )
+                elif notifier._update is not None:
+                    # We were showing an update that no longer applies.
+                    notifier._update = None
+                    _refresh_menu()
             except Exception:  # noqa: BLE001 - never let the loop die
                 pass
             notifier._stop.wait(max(1, notifier.settings.update_check_hours) * 3600)
@@ -352,5 +411,5 @@ def run_tray(settings: config.Settings) -> None:
 
     thread = threading.Thread(target=notifier.run, daemon=True)
     thread.start()
-    threading.Thread(target=_auto_update_loop, args=(icon,), daemon=True).start()
+    threading.Thread(target=_auto_update_loop, daemon=True).start()
     icon.run()
