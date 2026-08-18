@@ -17,7 +17,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from . import config, notifications
+from . import __version__, config, notifications, updates
 from .device import BatteryStatus, DeviceNotFound, read_battery
 from .thresholds import ThresholdEngine
 
@@ -42,6 +42,9 @@ class Notifier:
         self._stop = threading.Event()
         self._latest = Reading(None, False, False, False, 0.0)
         self._on_update = None  # optional callback(Reading) for the tray
+        # Set by the background update check when a newer release is found.
+        self._update: updates.UpdateInfo | None = None
+        self._update_notified = False
 
     # -- polling -----------------------------------------------------------
     def poll_once(self) -> Reading:
@@ -111,7 +114,7 @@ def status_text(reading: Reading) -> str:
 
 def run_headless(settings: config.Settings) -> None:
     notifier = Notifier(settings)
-    print(f"Pulsar Battery Notifier - thresholds {settings.thresholds}, "
+    print(f"Pulsar Battery Notifier v{__version__} - thresholds {settings.thresholds}, "
           f"every {settings.poll_seconds}s. Ctrl+C to stop.")
 
     def echo(reading: Reading) -> None:
@@ -202,6 +205,96 @@ def run_tray(settings: config.Settings) -> None:
     def title_text(_item=None) -> str:
         return status_text(notifier.latest)
 
+    def update_label(_item=None) -> str:
+        if notifier._update is not None:
+            return f"Update to v{notifier._update.latest}"
+        return "Check for updates"
+
+    def _update_flow(icon) -> None:
+        """Check GitHub and, if a newer release exists, download + launch it."""
+        notifications.notify_text("Pulsar Battery Notifier", "Checking for updates…")
+        try:
+            info = updates.check_for_update(__version__)
+        except Exception as exc:  # noqa: BLE001 - network/parse errors
+            notifications.notify_text(
+                "Update check failed", str(exc) or "Could not reach GitHub."
+            )
+            return
+
+        if not info.available:
+            notifier._update = None
+            _refresh_menu(icon)
+            notifications.notify_text(
+                "Pulsar Battery Notifier", f"You're up to date (v{info.current})."
+            )
+            return
+
+        notifier._update = info
+        _refresh_menu(icon)
+
+        if not info.setup_url:
+            notifications.notify_text(
+                "Update available", f"v{info.latest} — opening the download page."
+            )
+            updates.open_release_page(info.release_url)
+            return
+
+        notifications.notify_text(
+            "Pulsar Battery Notifier", f"Downloading v{info.latest}…"
+        )
+        try:
+            path = updates.download(
+                info.setup_url, info.setup_name or "PulsarBatteryNotifier-Setup.exe"
+            )
+        except Exception as exc:  # noqa: BLE001
+            notifications.notify_text("Update download failed", str(exc))
+            updates.open_release_page(info.release_url)
+            return
+
+        notifications.notify_text(
+            "Pulsar Battery Notifier",
+            f"Installing v{info.latest}. The app will close to finish updating.",
+        )
+        updates.launch(path)
+        # Quit so our exe unlocks for the installer to overwrite it.
+        notifier.stop()
+        try:
+            icon.stop()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def on_check_updates(icon, item):
+        threading.Thread(target=_update_flow, args=(icon,), daemon=True).start()
+
+    def _refresh_menu(icon) -> None:
+        try:
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _auto_update_loop(icon) -> None:
+        if not notifier.settings.auto_update_check:
+            return
+        # Small delay so we don't compete with startup.
+        if notifier._stop.wait(8):
+            return
+        while not notifier._stop.is_set():
+            try:
+                info = updates.check_for_update(__version__)
+                if info.available:
+                    notifier._update = info
+                    _refresh_menu(icon)
+                    if not notifier._update_notified:
+                        notifier._update_notified = True
+                        notifications.notify_text(
+                            "Pulsar Battery Notifier",
+                            f"Update available: v{info.latest}. "
+                            "Open the tray menu to install it.",
+                        )
+            except Exception:  # noqa: BLE001 - never let the loop die
+                pass
+            notifier._stop.wait(max(1, notifier.settings.update_check_hours) * 3600)
+
     icon = pystray.Icon(
         "pulsar_battery",
         icon=_make_icon_image(notifier.latest),
@@ -210,6 +303,7 @@ def run_tray(settings: config.Settings) -> None:
             pystray.MenuItem(title_text, None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Check now", on_check_now),
+            pystray.MenuItem(update_label, on_check_updates),
             pystray.MenuItem("Open config folder", on_open_config),
             pystray.MenuItem("Reload settings", on_reload),
             pystray.Menu.SEPARATOR,
@@ -228,4 +322,5 @@ def run_tray(settings: config.Settings) -> None:
 
     thread = threading.Thread(target=notifier.run, daemon=True)
     thread.start()
+    threading.Thread(target=_auto_update_loop, args=(icon,), daemon=True).start()
     icon.run()

@@ -44,9 +44,25 @@ except ImportError as exc:  # pragma: no cover - clearer error for users
     )
 
 VENDOR_ID = 0x3710
-PID_WIRELESS = 0x5406   # Pulsar 8K dongle
-PID_WIRED = 0x3414      # X2 Crazylight, wired
 VENDOR_USAGE_PAGE = 0xFF02
+
+# Pulsar's gaming mice share the same cmd04 battery protocol on the same vendor
+# HID interface (usage page 0xFF02), so instead of hardcoding a couple of PIDs
+# we probe *any* 0x3710 device that exposes that interface. That covers the
+# X2 / X2H / X2V2 / Xlite / X3 families and their 8K/4K dongles, wired or
+# wireless, without needing a per-model entry.
+#
+# The table below is optional: it only supplies friendlier names and a
+# wired/wireless label. Unknown PIDs still work in "auto" mode; the name
+# heuristic below classifies them for explicit wired/wireless filtering.
+PID_WIRELESS = 0x5406   # Pulsar 8K dongle (kept for reference)
+PID_WIRED = 0x3414      # X2 Crazylight, wired (kept for reference)
+
+# product_id -> (friendly name, "wireless" | "wired")
+KNOWN_MODELS: dict[int, tuple[str, str]] = {
+    0x5406: ("Pulsar 8K Dongle", "wireless"),
+    0x3414: ("Pulsar X2 (wired)", "wired"),
+}
 
 _REPORT_ID = 0x08
 _BATTERY_BYTE = 6
@@ -77,20 +93,35 @@ class DeviceNotFound(Exception):
     """No matching Pulsar vendor HID interface is present."""
 
 
-def _candidate_interfaces(mode: str = "auto") -> list[dict]:
-    """Enumerate the vendor HID interfaces we can talk cmd04 to."""
-    if mode == "wireless":
-        pids = {PID_WIRELESS}
-    elif mode == "wired":
-        pids = {PID_WIRED}
-    else:
-        pids = {PID_WIRELESS, PID_WIRED}
+def classify(info: dict) -> str:
+    """Best-effort 'wireless' | 'wired' label for a Pulsar interface."""
+    known = KNOWN_MODELS.get(info.get("product_id"))
+    if known is not None:
+        return known[1]
+    name = (info.get("product_string") or "").lower()
+    if any(w in name for w in ("dongle", "receiver", "wireless", "2.4")):
+        return "wireless"
+    return "wired"
 
+
+def model_name(info: dict) -> str:
+    known = KNOWN_MODELS.get(info.get("product_id"))
+    if known is not None:
+        return known[0]
+    return (info.get("product_string") or "Pulsar mouse").strip()
+
+
+def _candidate_interfaces(mode: str = "auto") -> list[dict]:
+    """Enumerate the Pulsar vendor HID interfaces we can talk cmd04 to.
+
+    In "auto" mode this returns every 0x3710 device exposing the 0xFF02 vendor
+    interface. "wireless"/"wired" filter by :func:`classify`.
+    """
     found = []
     for info in hid.enumerate(VENDOR_ID, 0):
-        if info.get("product_id") not in pids:
-            continue
         if info.get("usage_page") != VENDOR_USAGE_PAGE:
+            continue
+        if mode in ("wireless", "wired") and classify(info) != mode:
             continue
         found.append(info)
     # Stable ordering so probing is deterministic across runs.
@@ -185,8 +216,8 @@ def read_battery(mode: str = "auto") -> BatteryStatus | None:
     interfaces = _candidate_interfaces(mode)
     if not interfaces:
         raise DeviceNotFound(
-            "No Pulsar X2 Crazylight vendor interface found. "
-            "Is the dongle plugged in? (Looking for VID 0x3710, usage page 0xFF02.)"
+            "No Pulsar mouse or dongle found. Is it plugged in / powered on? "
+            "(Looking for VID 0x3710 with the vendor interface usage page 0xFF02.)"
         )
 
     for info in interfaces:
@@ -205,6 +236,13 @@ def read_battery(mode: str = "auto") -> BatteryStatus | None:
                 except OSError:
                     pass
     return None  # device present but asleep / not answering right now
+
+
+def current_device(mode: str = "auto") -> tuple[str, str] | None:
+    """(name, 'wireless'|'wired') of the first matching Pulsar interface, if any."""
+    for info in _candidate_interfaces(mode):
+        return model_name(info), classify(info)
+    return None
 
 
 def list_interfaces() -> list[dict]:

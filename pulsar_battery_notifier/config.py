@@ -39,6 +39,9 @@ class Settings:
     # silent). Beyond this the status shows as "unknown".
     stale_grace_seconds: int = 600
     connection_mode: str = "auto"  # auto | wireless | wired
+    # Check GitHub for a newer release in the background, and how often.
+    auto_update_check: bool = True
+    update_check_hours: int = 24
 
     def sanitized(self) -> "Settings":
         thresholds = sorted({int(t) for t in self.thresholds if 1 <= int(t) <= 100}, reverse=True)
@@ -52,6 +55,8 @@ class Settings:
             beep=bool(self.beep),
             stale_grace_seconds=max(60, int(self.stale_grace_seconds)),
             connection_mode=mode,
+            auto_update_check=bool(self.auto_update_check),
+            update_check_hours=max(1, int(self.update_check_hours)),
         )
 
 

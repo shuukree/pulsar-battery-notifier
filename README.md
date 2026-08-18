@@ -26,15 +26,22 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
 - Never alerts while the mouse is charging.
 - Tray icon showing current % / charging / "last known" state.
 - Config is a plain JSON file you can hand-edit; reload from the tray.
+- **Built-in updater**: checks GitHub for new releases in the background and
+  offers a one-click **Check for updates** in the tray menu that downloads and
+  launches the latest installer.
 
 ## Supported hardware
 
-- **Pulsar X2 Crazylight** with the 8K wireless dongle (VID `0x3710`,
-  PID `0x5406` wireless / `0x3414` wired).
+Works with **Pulsar wireless and wired gaming mice** (VID `0x3710`) that speak
+the standard vendor battery protocol on HID usage page `0xFF02` — the X2 / X2H /
+X2V2 / Xlite / X3 families and their 8K/4K dongles. Rather than hardcoding a
+list of product IDs, the app probes any Pulsar device exposing that vendor
+interface, so new models generally work out of the box.
 
-Other Pulsar mice use similar protocols but different IDs and are not wired up
-here. Adding one is mostly a matter of a new module under
-`pulsar_battery_notifier/` — PRs welcome.
+Developed and verified against the **Pulsar X2 Crazylight** (8K dongle). If your
+Pulsar mouse isn't detected, run `python main.py --list-devices` and open an
+issue with the output — the offsets are consistent across the lineup, but a new
+model may need a tweak.
 
 ## Install (recommended)
 
@@ -74,6 +81,7 @@ python main.py --console       # run in a console, no tray
 python main.py --once          # print the battery once and exit
 python main.py --list-devices  # list Pulsar HID interfaces (debugging)
 python main.py --mode wired    # force wired/wireless instead of auto
+python main.py --version       # print the version and exit
 ```
 
 Tip: if `--once` says the battery is unknown, wiggle the mouse first. The dongle
@@ -92,7 +100,9 @@ settings**.
   "rearm_hysteresis": 3,
   "beep": true,
   "stale_grace_seconds": 600,
-  "connection_mode": "auto"
+  "connection_mode": "auto",
+  "auto_update_check": true,
+  "update_check_hours": 24
 }
 ```
 
@@ -104,6 +114,16 @@ settings**.
 - **stale_grace_seconds** — how long to keep showing the last reading while the
   mouse is asleep before the tray says "unknown".
 - **connection_mode** — `auto`, `wireless`, or `wired`.
+- **auto_update_check** — check GitHub for a newer release in the background.
+- **update_check_hours** — how often the background check runs (hours).
+
+## Updating
+
+The app checks for new releases on startup and once a day. When one is found it
+shows a toast and the tray menu changes to **Update to vX.Y.Z**. Click it (or
+**Check for updates** any time) and it downloads the latest installer and runs
+it — the install upgrades in place. You can turn the background check off with
+`"auto_update_check": false`.
 
 ## Auto-start on login
 

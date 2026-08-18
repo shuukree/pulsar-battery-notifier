@@ -12,13 +12,20 @@ from __future__ import annotations
 import argparse
 import sys
 
-from pulsar_battery_notifier import config
+from pulsar_battery_notifier import __version__, config
 from pulsar_battery_notifier.app import Notifier, run_headless, run_tray, status_text
-from pulsar_battery_notifier.device import DeviceNotFound, list_interfaces, read_battery
+from pulsar_battery_notifier.device import (
+    DeviceNotFound,
+    classify,
+    list_interfaces,
+    model_name,
+    read_battery,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Pulsar X2 Crazylight battery notifier")
+    parser = argparse.ArgumentParser(description="Pulsar mouse battery notifier")
+    parser.add_argument("--version", action="version", version=f"Pulsar Battery Notifier {__version__}")
     parser.add_argument("--console", action="store_true", help="run in console instead of tray")
     parser.add_argument("--once", action="store_true", help="print battery once and exit")
     parser.add_argument("--list-devices", action="store_true", help="list Pulsar HID interfaces")
@@ -41,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"{i}: pid=0x{info.get('product_id', 0):04x} "
                 f"iface={info.get('interface_number')} "
                 f"usage_page={('0x%04x' % up) if up is not None else 'None'} "
+                f"conn={classify(info)} "
+                f"name={model_name(info)!r} "
                 f"product={info.get('product_string')!r}"
             )
         return 0
