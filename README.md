@@ -26,7 +26,11 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
 - Never alerts while the mouse is charging.
 - Tray icon shows the **battery % as a colour-coded number** — green (≥50),
   orange (≥20), red (<20), blue while charging, and `??` when there's no reading.
-  Updates live and adapts to light/dark taskbars.
+- **Auto taskbar-theme detection** — digit colours and outline adapt to Windows
+  Light/Dark taskbars automatically, no configuration.
+- **Time-to-empty estimate** — hover the tray icon to see a predicted runtime,
+  e.g. `Pulsar battery: 85% (~12h) - On battery`, inferred from the recent
+  discharge slope. Toggle it from the tray menu.
 - Config is a plain JSON file you can hand-edit; reload from the tray.
 - **Built-in updater**: checks GitHub for new releases in the background and
   offers a one-click **Check for updates** in the tray menu that downloads and
@@ -105,7 +109,8 @@ settings**.
   "stale_grace_seconds": 600,
   "connection_mode": "auto",
   "auto_update_check": true,
-  "update_check_hours": 24
+  "update_check_hours": 24,
+  "show_time_estimate": true
 }
 ```
 
@@ -126,6 +131,19 @@ immediately.
 - **connection_mode** — `auto`, `wireless`, or `wired`.
 - **auto_update_check** — check GitHub for a newer release in the background.
 - **update_check_hours** — how often the background check runs (hours).
+- **show_time_estimate** — show the predicted time-to-empty in the tooltip (also
+  toggleable from the tray menu).
+
+## Time-to-empty estimate
+
+The mice have no fuel-gauge IC, so remaining time can't be read from the device
+— it's **inferred from how fast the percentage falls**. The app samples
+`(time, %)` while discharging, fits a line through a rolling ~3-hour window to get
+the discharge rate (%/hour), and divides the current % by that rate. It only
+appears once there's enough signal (a few samples over ≥10 min with a ≥2% drop),
+and it resets whenever you charge or the battery jumps up, so a recharge never
+skews it. Expect it to be a rough guide that tightens the longer you're on
+battery, not a precise countdown.
 
 ## Updating
 

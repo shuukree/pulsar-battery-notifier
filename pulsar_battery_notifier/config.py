@@ -45,6 +45,8 @@ class Settings:
     # Check GitHub for a newer release in the background, and how often.
     auto_update_check: bool = True
     update_check_hours: int = 24
+    # Show an estimated time-to-empty in the tray tooltip, e.g. "85% (~12h)".
+    show_time_estimate: bool = True
 
     def sanitized(self) -> "Settings":
         thresholds = sorted({int(t) for t in self.thresholds if 1 <= int(t) <= 100}, reverse=True)
@@ -61,6 +63,7 @@ class Settings:
             connection_mode=mode,
             auto_update_check=bool(self.auto_update_check),
             update_check_hours=max(1, int(self.update_check_hours)),
+            show_time_estimate=bool(self.show_time_estimate),
         )
 
 

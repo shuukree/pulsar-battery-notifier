@@ -20,6 +20,7 @@ from functools import lru_cache
 
 from . import __version__, config, notifications, updates
 from .device import BatteryStatus, DeviceNotFound, read_battery
+from .estimate import RuntimeEstimator, format_hours
 from .thresholds import ThresholdEngine
 
 
@@ -41,6 +42,7 @@ class Notifier:
         self._last_good: BatteryStatus | None = None
         self._last_good_at: float = 0.0
         self._miss_streak = 0  # consecutive polls with no answer (asleep)
+        self.estimator = RuntimeEstimator()
         self._stop = threading.Event()
         self._latest = Reading(None, False, False, False, 0.0)
         self._on_update = None  # optional callback(Reading) for the tray
@@ -68,6 +70,7 @@ class Notifier:
             self._miss_streak = 0
             self._last_good = status
             self._last_good_at = now
+            self.estimator.add(status.percent, status.charging, now)
             reading = Reading(status.percent, status.charging, True, True, now)
             alert = self.engine.update(status.percent, status.charging)
             if alert is not None:
@@ -129,15 +132,18 @@ def status_text(reading: Reading) -> str:
     return f"Battery: {reading.percent}% \u2014 {state}{freshness}"
 
 
-def tooltip_text(reading: Reading) -> str:
-    """Short tray-tooltip line, e.g. 'Pulsar battery: 95% - Charging'."""
+def tooltip_text(reading: Reading, est_hours: float | None = None) -> str:
+    """Short tray-tooltip line, e.g. 'Pulsar battery: 85% (~12h) - On battery'."""
     if not reading.device_present:
         return "Pulsar battery: not connected"
     if reading.percent is None:
         return "Pulsar battery: unknown (asleep)"
-    state = "Charging" if reading.charging else "On battery"
+    if reading.charging:
+        return f"Pulsar battery: {reading.percent}% - Charging"
+    est = format_hours(est_hours)
+    pct = f"{reading.percent}% ({est})" if est else f"{reading.percent}%"
     suffix = "" if reading.fresh else " (last known)"
-    return f"Pulsar battery: {reading.percent}% - {state}{suffix}"
+    return f"Pulsar battery: {pct} - On battery{suffix}"
 
 
 def run_headless(settings: config.Settings) -> None:
@@ -180,26 +186,70 @@ def _font(size: int):
     return ImageFont.load_default()
 
 
-def _level_color(reading: Reading) -> tuple[int, int, int, int]:
-    """Green (>=50) -> orange (>=20) -> red (<20); blue while charging."""
+# Digit fills per taskbar background. Colour conveys level either way; on a dark
+# taskbar we use bright fills, on a light one deeper/saturated fills, each paired
+# with a contrasting outline so the number stays crisp.
+_PALETTE = {
+    "dark": {
+        "charging": (72, 170, 255, 255),
+        "green": (86, 214, 122, 255),
+        "orange": (245, 178, 46, 255),
+        "red": (240, 84, 84, 255),
+        "grey": (188, 188, 188, 255),
+    },
+    "light": {
+        "charging": (14, 104, 210, 255),
+        "green": (22, 146, 72, 255),
+        "orange": (194, 116, 4, 255),
+        "red": (200, 40, 40, 255),
+        "grey": (92, 92, 92, 255),
+    },
+}
+# Outline colour per theme (opposite luminance of the fill).
+_OUTLINE = {"dark": (0, 0, 0, 165), "light": (255, 255, 255, 220)}
+
+_theme_cache = {"at": 0.0, "light": False}
+
+
+def _taskbar_is_light() -> bool:
+    """True when Windows is using the Light taskbar. Cached briefly."""
+    now = time.time()
+    if now - _theme_cache["at"] < 5.0:
+        return _theme_cache["light"]
+    light = False
+    try:
+        import winreg
+
+        key = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+            val, _ = winreg.QueryValueEx(k, "SystemUsesLightTheme")
+            light = bool(val)
+    except Exception:  # noqa: BLE001 - non-Windows or key missing -> assume dark
+        light = False
+    _theme_cache.update(at=now, light=light)
+    return light
+
+
+def _level_key(reading: Reading) -> str:
+    """'charging' | 'green' | 'orange' | 'red' | 'grey' for the current state."""
     if reading.percent is not None and reading.charging:
-        return (66, 165, 245, 255)      # blue
+        return "charging"
     pct = reading.percent
     if pct is None:
-        return (176, 176, 176, 255)     # grey ("??")
+        return "grey"
     if pct >= 50:
-        return (76, 200, 112, 255)      # green
+        return "green"
     if pct >= 20:
-        return (240, 170, 40, 255)      # orange
-    return (232, 72, 72, 255)           # red
+        return "orange"
+    return "red"
 
 
 def _make_icon_image(reading: Reading):
     """Render the battery percentage as a colour-coded number, like a badge.
 
     Shows ``??`` when there is no reading (dongle unplugged or mouse asleep past
-    the grace window). A dark outline keeps the digits legible on a light
-    taskbar; the bright fill keeps them legible on a dark one.
+    the grace window). Colours and the outline adapt to the Windows Light/Dark
+    taskbar so the digits stay legible either way.
     """
     from PIL import Image, ImageDraw
 
@@ -212,13 +262,15 @@ def _make_icon_image(reading: Reading):
     else:
         text = str(max(0, min(100, reading.percent)))
 
+    theme = "light" if _taskbar_is_light() else "dark"
+    fill = _PALETTE[theme][_level_key(reading)]
     # Shrink the font for wider strings ("100") so it always fits the box.
     size = 60 if len(text) <= 2 else 44
     font = _font(size)
     d.text(
         (S / 2, S / 2), text,
-        font=font, fill=_level_color(reading), anchor="mm",
-        stroke_width=3, stroke_fill=(0, 0, 0, 190),
+        font=font, fill=fill, anchor="mm",
+        stroke_width=3, stroke_fill=_OUTLINE[theme],
     )
     return img
 
@@ -282,6 +334,15 @@ def run_tray(settings: config.Settings) -> None:
         notifications.notify_text(
             "Pulsar Battery", f"Reloaded settings: thresholds {new_settings.thresholds}"
         )
+
+    def on_toggle_estimate(icon, item):
+        notifier.settings.show_time_estimate = not notifier.settings.show_time_estimate
+        try:
+            config.save(notifier.settings)
+        except Exception:  # noqa: BLE001
+            pass
+        _refresh_menu()
+        on_update(notifier.latest)  # refresh the tooltip right away
 
     def on_quit(icon, item):
         notifier.stop()
@@ -419,6 +480,10 @@ def run_tray(settings: config.Settings) -> None:
             pystray.MenuItem(title_text, None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Check now", on_check_now),
+            pystray.MenuItem(
+                "Show time estimate", on_toggle_estimate,
+                checked=lambda item: notifier.settings.show_time_estimate,
+            ),
             pystray.MenuItem(update_label, on_check_updates),
             pystray.MenuItem("Open config folder", on_open_config),
             pystray.MenuItem("Reload settings", on_reload),
@@ -429,8 +494,15 @@ def run_tray(settings: config.Settings) -> None:
 
     def on_update(reading: Reading) -> None:
         try:
+            est = None
+            if (
+                notifier.settings.show_time_estimate
+                and reading.percent is not None
+                and not reading.charging
+            ):
+                est = notifier.estimator.hours_remaining()
             icon.icon = _make_icon_image(reading)
-            icon.title = tooltip_text(reading)
+            icon.title = tooltip_text(reading, est)
         except Exception:  # noqa: BLE001
             pass
 
