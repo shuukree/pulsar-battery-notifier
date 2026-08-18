@@ -40,6 +40,8 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
   (charging spans highlighted), plus a 6h/24h range toggle.
 - **Settings window** — a **Settings…** tray item opens a themed, sectioned
   editor for thresholds, intervals and toggles; changes apply live (no restart).
+  A device column shows live status, and a **model picker** fetches your mouse's
+  photo from pulsar.gg (cached locally).
 - Edit settings in the **Settings** window, or hand-edit the JSON — either way
   changes apply live (the app watches the file).
 - **Built-in updater**: checks GitHub for new releases in the background and

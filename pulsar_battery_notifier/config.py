@@ -62,6 +62,8 @@ class Settings:
     # Notify once when charging reaches this level ("battery full, unplug").
     notify_full: bool = True
     full_level: int = 100
+    # User-picked mouse model (for the device photo in Settings). "" = none.
+    model: str = ""
 
     def sanitized(self) -> "Settings":
         thresholds = sorted({int(t) for t in self.thresholds if 1 <= int(t) <= 100}, reverse=True)
@@ -81,6 +83,7 @@ class Settings:
             show_time_estimate=bool(self.show_time_estimate),
             notify_full=bool(self.notify_full),
             full_level=max(50, min(100, int(self.full_level))),
+            model=str(self.model or ""),
         )
 
 

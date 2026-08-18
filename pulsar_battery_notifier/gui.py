@@ -10,14 +10,49 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import subprocess
 import sys
 import time
+import urllib.request
 
 from . import config
 
 _FONT = "Segoe UI"
 _FONT_SEMI = "Segoe UI Semibold"
+
+# Product photos on Pulsar's Shopify CDN, keyed by model. The mouse can't be
+# auto-identified (the dongle only reports "Pulsar 8K Dongle"), so the user picks
+# their model in Settings and we fetch + cache the matching photo.
+MODEL_IMAGES = {
+    "X2 CrazyLight": "https://eu.pulsar.gg/cdn/shop/files/Pulsar-X2-CrazyLight_medium_black_01-medium_1024x.png",
+    "X2N CrazyLight": "https://eu.pulsar.gg/cdn/shop/files/Pulsar-X2N_FRONT-MINI_1024x.png",
+    "X2H CrazyLight": "https://eu.pulsar.gg/cdn/shop/files/Pulsar-X2H_medium_black_front-medium_1024x.png",
+    "X2 v3": "https://eu.pulsar.gg/cdn/shop/files/Pulsar_X2_v3_mini_Gaming_Mouse_Black_001_1024x.png",
+    "X3 CrazyLight": "https://eu.pulsar.gg/cdn/shop/files/X3_crazylight_black_medium_Top_M_1024x.png",
+    "Xlite CrazyLight": "https://eu.pulsar.gg/cdn/shop/files/Pulsar-Xlite-CrazyLight_Black_Medium_01-medium_1024x.png",
+    "Xlite v4": "https://eu.pulsar.gg/cdn/shop/files/PulsarXlitev4GamingMouse_Black_001_1024x.png",
+}
+_GENERIC = "Generic (no photo)"
+
+
+def _model_image_path(model: str):
+    """Return a local cached PNG path for a model, downloading it once."""
+    url = MODEL_IMAGES.get(model)
+    if not url:
+        return None
+    safe = "".join(c for c in model if c.isalnum())
+    path = config.config_dir() / f"model_{safe}.png"
+    if path.exists():
+        return str(path)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "PulsarBatteryNotifier"})
+        data = urllib.request.urlopen(req, timeout=15, context=ssl.create_default_context()).read()
+        with open(path, "wb") as f:
+            f.write(data)
+        return str(path)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # -- theme -----------------------------------------------------------------
@@ -187,11 +222,11 @@ def run_panel() -> None:
     cv.pack(fill="both", expand=True, padx=8, pady=6)
 
     row = tk.Frame(card, bg=th["card"])
-    row.pack(fill="x", padx=12, pady=(0, 12))
+    row.pack(fill="x", padx=12, pady=(4, 14))
 
     def mkbtn(parent, text, cmd):
         btn = tk.Label(parent, text=text, bg=th["btn"], fg=th["btn_fg"],
-                       font=(_FONT, 9), padx=12, pady=6, cursor="hand2")
+                       font=(_FONT, 9), padx=14, pady=9, cursor="hand2")
         btn.bind("<Button-1>", lambda e: cmd())
         btn.bind("<Enter>", lambda e: btn.config(bg=th["btn_hover"]))
         btn.bind("<Leave>", lambda e: btn.config(bg=th["btn"]))
@@ -229,8 +264,10 @@ def run_panel() -> None:
                     log.samples(), st, th, rng["hours"])
         root.after(1500, refresh)
 
+    order = [1, 6, 24]
+
     def toggle_range():
-        rng["hours"] = 24 if rng["hours"] == 6 else 6
+        rng["hours"] = order[(order.index(rng["hours"]) + 1) % len(order)]
         rng_btn.config(text=f"Last {rng['hours']}h")
 
     rng_btn = mkbtn(row, "Last 6h", toggle_range)
@@ -377,6 +414,119 @@ def _threshold_editor(parent, initial, th):
     return wrap, (lambda: sorted(state["selected"], reverse=True))
 
 
+def _draw_mouse(cv, w, h, th):
+    """A simple themed mouse silhouette used when we have no product photo."""
+    cx = w / 2
+    top, bot = 6, h - 6
+    cv.create_oval(cx - 40, top, cx + 40, bot, fill=th["accent"], outline="")
+    # left/right button split + scroll wheel
+    cv.create_line(cx, top + 6, cx, top + (bot - top) * 0.42, fill=th["card"], width=2)
+    cv.create_rectangle(cx - 3, top + 12, cx + 3, top + 30, fill=th["card"], outline="")
+
+
+def _build_sidebar(parent, th, root, s):
+    """Left device column: model photo/glyph + live details. Returns a getter
+    for the currently selected model string ('' when Generic)."""
+    import threading
+    import tkinter as tk
+
+    pad = tk.Frame(parent, bg=th["card"])
+    pad.pack(fill="both", expand=True, padx=16, pady=16)
+    tk.Label(pad, text="DEVICE", bg=th["card"], fg=th["accent"],
+             font=(_FONT_SEMI, 9)).pack(anchor="w")
+
+    imgbox = tk.Frame(pad, bg=th["card"], width=176, height=120)
+    imgbox.pack(pady=(10, 8))
+    imgbox.pack_propagate(False)
+
+    def show_glyph():
+        for w in imgbox.winfo_children():
+            w.destroy()
+        cv = tk.Canvas(imgbox, width=176, height=120, bg=th["card"], highlightthickness=0)
+        cv.pack()
+        _draw_mouse(cv, 176, 120, th)
+
+    def show_image(path):
+        try:
+            from PIL import Image, ImageTk
+
+            im = Image.open(path).convert("RGBA")
+            im.thumbnail((176, 118))
+            photo = ImageTk.PhotoImage(im)
+            for w in imgbox.winfo_children():
+                w.destroy()
+            lbl = tk.Label(imgbox, image=photo, bg=th["card"])
+            lbl.image = photo  # keep a reference
+            lbl.pack(expand=True)
+        except Exception:  # noqa: BLE001
+            show_glyph()
+
+    def load_image(model):
+        if not model or model == _GENERIC:
+            show_glyph()
+            return
+
+        def work():
+            path = _model_image_path(model)
+            root.after(0, lambda: show_image(path) if path else show_glyph())
+
+        threading.Thread(target=work, daemon=True).start()
+
+    # Model picker.
+    picker = tk.Frame(pad, bg=th["card"])
+    picker.pack(fill="x", pady=(0, 8))
+    tk.Label(picker, text="Model", bg=th["card"], fg=th["sub"], font=(_FONT, 9)).pack(side="left")
+    model_var = tk.StringVar(value=s.model if s.model in MODEL_IMAGES else _GENERIC)
+    om = tk.OptionMenu(picker, model_var, _GENERIC, *MODEL_IMAGES.keys(),
+                       command=lambda _v: load_image(model_var.get()))
+    om.config(bg=th["btn"], fg=th["btn_fg"], activebackground=th["btn_hover"],
+              activeforeground=th["btn_fg"], highlightthickness=0, relief="flat",
+              font=(_FONT, 9), anchor="e")
+    om["menu"].config(bg=th["card"], fg=th["fg"], activebackground=th["accent"],
+                      activeforeground="#ffffff")
+    om.pack(side="right")
+
+    name = tk.Label(pad, text="Detecting…", bg=th["card"], fg=th["fg"],
+                    font=(_FONT_SEMI, 11), wraplength=180, justify="left", anchor="w")
+    name.pack(fill="x")
+
+    rows = {}
+    for key in ("Connection", "Charging", "Battery", "Polling", "Firmware"):
+        r = tk.Frame(pad, bg=th["card"])
+        r.pack(fill="x", pady=4)
+        tk.Label(r, text=key, bg=th["card"], fg=th["sub"], font=(_FONT, 9)).pack(side="left")
+        v = tk.Label(r, text="—", bg=th["card"], fg=th["fg"], font=(_FONT, 9))
+        v.pack(side="right")
+        rows[key] = v
+
+    tk.Label(pad, text="Polling / firmware aren't read yet.", bg=th["card"], fg=th["sub"],
+             font=(_FONT, 8), wraplength=180, justify="left").pack(anchor="w", pady=(10, 0))
+
+    def read_state():
+        try:
+            with open(config.state_path(), encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def refresh():
+        st = read_state()
+        pct = st.get("percent")
+        if st.get("device_name"):
+            name.config(text=st["device_name"])
+        elif st.get("device_present") is False:
+            name.config(text="No device connected")
+        rows["Connection"].config(text=st.get("device_conn") or "—")
+        rows["Charging"].config(
+            text="Yes" if st.get("charging") else ("No" if pct is not None else "—"))
+        rows["Battery"].config(text=f"{pct}%" if pct is not None else "—")
+        root.after(2000, refresh)
+
+    load_image(model_var.get())
+    refresh()
+    return lambda: "" if model_var.get() == _GENERIC else model_var.get()
+
+
 def run_settings() -> None:
     import tkinter as tk
 
@@ -388,8 +538,17 @@ def run_settings() -> None:
     root.configure(bg=th["bg"])
     root.resizable(False, False)
 
-    outer = tk.Frame(root, bg=th["bg"])
-    outer.pack(fill="both", expand=True, padx=20, pady=18)
+    container = tk.Frame(root, bg=th["bg"])
+    container.pack(fill="both", expand=True, padx=16, pady=16)
+
+    sidebar = tk.Frame(container, bg=th["card"], highlightbackground=th["border"],
+                       highlightthickness=1, width=212)
+    sidebar.pack(side="left", fill="y", padx=(0, 16))
+    sidebar.pack_propagate(False)
+    model_get = _build_sidebar(sidebar, th, root, s)
+
+    outer = tk.Frame(container, bg=th["bg"])
+    outer.pack(side="left", fill="both", expand=True)
     tk.Label(outer, text="Settings", bg=th["bg"], fg=th["fg"],
              font=(_FONT_SEMI, 16)).pack(anchor="w")
     tk.Label(outer, text="Changes apply to the running app within a few seconds.",
@@ -482,9 +641,11 @@ def run_settings() -> None:
             show_time_estimate=est_var.get(),
             notify_full=full_var.get(),
             full_level=_to_int(full_lvl_var.get(), s.full_level),
+            model=model_get(),
         )
         config.save(new)
         status.config(text="Saved ✓  — applied within a few seconds.")
+        root.after(650, root.destroy)
 
     btns = tk.Frame(outer, bg=th["bg"])
     btns.pack(fill="x", pady=(14, 0))
