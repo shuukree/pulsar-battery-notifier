@@ -34,6 +34,23 @@ Other Pulsar mice use similar protocols but different IDs and are not wired up
 here. Adding one is mostly a matter of a new module under
 `pulsar_battery_notifier/` — PRs welcome.
 
+## Install (recommended)
+
+1. Go to the [**Releases**](https://github.com/shuukree/pulsar-battery-notifier/releases/latest) page.
+2. Download **`PulsarBatteryNotifier-Setup.exe`**.
+3. Run it and click through the wizard. Tick **"Start automatically when I sign
+   in to Windows"** if you want it always on.
+
+It installs per-user (no admin needed) and adds a Start Menu entry plus an
+uninstaller (**Settings → Apps** → *Pulsar Battery Notifier*). The app then lives
+in the system tray next to the clock.
+
+> Windows SmartScreen may show a blue "unknown publisher" warning — expected for
+> an unsigned hobby build. Click **More info → Run anyway**.
+
+Prefer a portable single file? Grab **`PulsarBatteryNotifier.exe`** from the same
+Release and run it directly — no install.
+
 ## Install (from source)
 
 Requires Windows 10/11 and Python 3.8+.
@@ -103,6 +120,17 @@ shortcut in:
 
 Produces `dist\PulsarBatteryNotifier.exe`. Windows SmartScreen may warn about an
 unknown publisher — expected for an unsigned hobby build.
+
+If [Inno Setup](https://jrsoftware.org/isdl.php) is installed, `build.ps1` also
+produces the installer `dist\PulsarBatteryNotifier-Setup.exe`. Or build it by
+hand:
+
+```powershell
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=1.0.0 installer.iss
+```
+
+In CI, the installer is built automatically and attached to every tagged
+Release — you don't need to do any of this to ship one.
 
 ## How it works
 

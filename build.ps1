@@ -15,5 +15,17 @@ python -m PyInstaller --clean --noconfirm --onefile --windowed `
 
 Write-Host ""
 Write-Host "Built: dist\PulsarBatteryNotifier.exe"
-Write-Host "To auto-start on login, drop a shortcut to it in:"
+
+# If Inno Setup is installed, also build the friendly installer (setup.exe).
+$iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+if (Test-Path $iscc) {
+  & $iscc /DAppVersion=1.0.0 installer.iss
+  Write-Host "Built: dist\PulsarBatteryNotifier-Setup.exe"
+} else {
+  Write-Host "Inno Setup not found - skipping installer."
+  Write-Host "Install it from https://jrsoftware.org/isdl.php to build setup.exe."
+}
+
+Write-Host "To auto-start on login, install via setup.exe (tick the startup box),"
+Write-Host "or drop a shortcut to the exe in:"
 Write-Host "  %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"

@@ -49,15 +49,29 @@ jobs:
           Write-Host "exit code: $($p.ExitCode)"
           if ($p.ExitCode -gt 2) { exit 1 }
 
-      - name: Upload build artifact
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer (setup.exe)
+        run: |
+          $ref = "${{ github.ref_name }}"
+          if ($ref -match '^v\d') { $v = $ref -replace '^v', '' } else { $v = "0.0.0-dev" }
+          Write-Host "Installer version: $v"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=$v installer.iss
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: PulsarBatteryNotifier
-          path: dist/PulsarBatteryNotifier.exe
+          path: |
+            dist/PulsarBatteryNotifier.exe
+            dist/PulsarBatteryNotifier-Setup.exe
 
       - name: Publish Release (on tag push only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/PulsarBatteryNotifier.exe
+          files: |
+            dist/PulsarBatteryNotifier-Setup.exe
+            dist/PulsarBatteryNotifier.exe
           generate_release_notes: true
