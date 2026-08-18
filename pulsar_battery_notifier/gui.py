@@ -36,6 +36,26 @@ MODEL_IMAGES = {
 _GENERIC = "Generic (no photo)"
 
 
+def _image_key_for(model_name: str):
+    """Map a detected model name to a MODEL_IMAGES key (by family)."""
+    n = (model_name or "").lower()
+    if "x2h" in n:
+        return "X2H CrazyLight"
+    if "x2n" in n:
+        return "X2N CrazyLight"
+    if "x3" in n:
+        return "X3 CrazyLight"
+    if "xlite v4" in n:
+        return "Xlite v4"
+    if "xlite" in n:
+        return "Xlite CrazyLight"
+    if "x2 v3" in n:
+        return "X2 v3"
+    if "x2" in n:
+        return "X2 CrazyLight"
+    return None
+
+
 def _model_image_path(model: str):
     """Return a local cached PNG path for a model, downloading it once."""
     url = MODEL_IMAGES.get(model)
@@ -196,7 +216,7 @@ def run_panel() -> None:
     root.title("Pulsar battery")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    W, H = 380, 280
+    W, H = 380, 330
     l, t, r, b = _work_area()
     root.geometry(f"{W}x{H}+{max(l, r - W - 12)}+{max(t, b - H - 12)}")
     root.configure(bg=th["border"])
@@ -222,11 +242,11 @@ def run_panel() -> None:
     cv.pack(fill="both", expand=True, padx=8, pady=6)
 
     row = tk.Frame(card, bg=th["card"])
-    row.pack(fill="x", padx=12, pady=(4, 14))
+    row.pack(fill="x", padx=14, pady=(6, 16))
 
     def mkbtn(parent, text, cmd):
         btn = tk.Label(parent, text=text, bg=th["btn"], fg=th["btn_fg"],
-                       font=(_FONT, 9), padx=14, pady=9, cursor="hand2")
+                       font=(_FONT, 10), padx=18, pady=11, cursor="hand2")
         btn.bind("<Button-1>", lambda e: cmd())
         btn.bind("<Enter>", lambda e: btn.config(bg=th["btn_hover"]))
         btn.bind("<Leave>", lambda e: btn.config(bg=th["btn"]))
@@ -257,9 +277,11 @@ def run_panel() -> None:
             pass
         st = read_state()
         status.config(text=status_line(st))
-        dn = st.get("device_name") if st else None
+        model = st.get("device_model") or st.get("device_name") if st else None
         dc = st.get("device_conn") if st else None
-        device.config(text=(f"{dn} · {dc}" if dn else ""))
+        hz = st.get("polling_hz") if st else None
+        parts = [p for p in (model, dc, f"{hz} Hz" if hz else None) if p]
+        device.config(text="  ·  ".join(parts))
         _draw_graph(cv, cv.winfo_width() or W - 16, cv.winfo_height() or 150,
                     log.samples(), st, th, rng["hours"])
         root.after(1500, refresh)
@@ -477,8 +499,14 @@ def _build_sidebar(parent, th, root, s):
     picker.pack(fill="x", pady=(0, 8))
     tk.Label(picker, text="Model", bg=th["card"], fg=th["sub"], font=(_FONT, 9)).pack(side="left")
     model_var = tk.StringVar(value=s.model if s.model in MODEL_IMAGES else _GENERIC)
-    om = tk.OptionMenu(picker, model_var, _GENERIC, *MODEL_IMAGES.keys(),
-                       command=lambda _v: load_image(model_var.get()))
+    picked = {"user": s.model in MODEL_IMAGES}
+    auto = {"key": None}
+
+    def on_pick(_v=None):
+        picked["user"] = True
+        load_image(model_var.get())
+
+    om = tk.OptionMenu(picker, model_var, _GENERIC, *MODEL_IMAGES.keys(), command=on_pick)
     om.config(bg=th["btn"], fg=th["btn_fg"], activebackground=th["btn_hover"],
               activeforeground=th["btn_fg"], highlightthickness=0, relief="flat",
               font=(_FONT, 9), anchor="e")
@@ -499,9 +527,6 @@ def _build_sidebar(parent, th, root, s):
         v.pack(side="right")
         rows[key] = v
 
-    tk.Label(pad, text="Polling / firmware aren't read yet.", bg=th["card"], fg=th["sub"],
-             font=(_FONT, 8), wraplength=180, justify="left").pack(anchor="w", pady=(10, 0))
-
     def read_state():
         try:
             with open(config.state_path(), encoding="utf-8") as f:
@@ -512,14 +537,24 @@ def _build_sidebar(parent, th, root, s):
     def refresh():
         st = read_state()
         pct = st.get("percent")
-        if st.get("device_name"):
-            name.config(text=st["device_name"])
+        model_txt = st.get("device_model") or st.get("device_name")
+        if model_txt:
+            name.config(text=model_txt)
         elif st.get("device_present") is False:
             name.config(text="No device connected")
+        # Auto-pick the photo from the detected model (until the user overrides).
+        if not picked["user"] and st.get("device_model"):
+            key = _image_key_for(st["device_model"])
+            if key and key != auto["key"]:
+                auto["key"] = key
+                model_var.set(key)
+                load_image(key)
         rows["Connection"].config(text=st.get("device_conn") or "—")
         rows["Charging"].config(
             text="Yes" if st.get("charging") else ("No" if pct is not None else "—"))
         rows["Battery"].config(text=f"{pct}%" if pct is not None else "—")
+        rows["Polling"].config(text=f"{st['polling_hz']} Hz" if st.get("polling_hz") else "—")
+        rows["Firmware"].config(text=st.get("firmware") or "—")
         root.after(2000, refresh)
 
     load_image(model_var.get())

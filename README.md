@@ -40,8 +40,9 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
   (charging spans highlighted), plus a 6h/24h range toggle.
 - **Settings window** — a **Settings…** tray item opens a themed, sectioned
   editor for thresholds, intervals and toggles; changes apply live (no restart).
-  A device column shows live status, and a **model picker** fetches your mouse's
-  photo from pulsar.gg (cached locally).
+  A device column shows live status — **model name, firmware, polling rate,
+  connection** — identified over the cMouse protocol, and **auto-picks your
+  mouse's photo** from pulsar.gg (cached locally; you can override the model).
 - Edit settings in the **Settings** window, or hand-edit the JSON — either way
   changes apply live (the app watches the file).
 - **Built-in updater**: checks GitHub for new releases in the background and
@@ -235,6 +236,9 @@ multi-threshold alerting engine on top. Thanks to:
 - [andrewrabert/python-pulsar-mouse-tool](https://github.com/andrewrabert/python-pulsar-mouse-tool) (MIT) — the canonical protocol reference.
 - [jonkristian/pulsar-x3-python](https://github.com/jonkristian/pulsar-x3-python) — X3 protocol notes (battery at byte 6).
 - [Elehiggle/SimplePulsarBatteryNotification](https://github.com/Elehiggle/SimplePulsarBatteryNotification) (MIT) — X2 Crazylight IDs and init sequence.
+- [darthsoup/PulsarBattery](https://github.com/darthsoup/PulsarBattery) (MIT) — the
+  cMouse 17-byte protocol for firmware, polling-rate and model identification
+  (`CmdVersion` / `CmdInfo`, CID/MID catalog), adapted in `device.py`.
 
 If you want a single-threshold tool or a C# version, those projects are worth a
 look too.

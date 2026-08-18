@@ -20,7 +20,13 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from . import __version__, config, notifications, updates
-from .device import BatteryStatus, DeviceNotFound, current_device, read_battery
+from .device import (
+    BatteryStatus,
+    DeviceNotFound,
+    current_device,
+    read_battery,
+    read_device_info,
+)
 from .estimate import RuntimeEstimator, format_hours, load_history, save_history
 from .history import BatteryLog
 from .thresholds import ThresholdEngine
@@ -60,6 +66,8 @@ class Notifier:
             pass
         self._full_notified = False
         self._seen_below_full = False
+        self._devinfo: dict = {}
+        self._devinfo_at = 0.0
         try:
             self._settings_mtime = os.path.getmtime(config.config_path())
         except OSError:
@@ -111,6 +119,15 @@ class Notifier:
             self._last_good = status
             self._last_good_at = now
             self.estimator.add(status.percent, status.charging, now)
+            # Refresh firmware/polling/model occasionally (mouse must be awake).
+            if not self._devinfo or now - self._devinfo_at >= 60:
+                self._devinfo_at = now
+                try:
+                    di = read_device_info(self.settings.connection_mode)
+                    if di:
+                        self._devinfo = di
+                except Exception:  # noqa: BLE001
+                    pass
             # Persist at most once a minute so a restart keeps the estimate.
             if now - self._last_hist_save >= 60:
                 self._last_hist_save = now
@@ -158,6 +175,7 @@ class Notifier:
                 dev_name, dev_conn = info
         except Exception:  # noqa: BLE001
             pass
+        di = self._devinfo or {}
         payload = {
             "percent": reading.percent,
             "charging": reading.charging,
@@ -166,7 +184,11 @@ class Notifier:
             "at": reading.at,
             "estimate_hours": est,
             "device_name": dev_name,
-            "device_conn": dev_conn,
+            # Prefer the identified connection/model from the extended info.
+            "device_conn": di.get("connection") or dev_conn,
+            "device_model": di.get("model"),
+            "firmware": di.get("firmware"),
+            "polling_hz": di.get("polling_hz"),
         }
         try:
             path = config.state_path()

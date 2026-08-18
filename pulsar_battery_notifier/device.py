@@ -251,6 +251,135 @@ def current_device(mode: str = "auto") -> tuple[str, str] | None:
     return None
 
 
+# -- extended device info (firmware / polling / model) ---------------------
+#
+# Adapted from darthsoup/PulsarBattery (MIT) - the "cMouse" legacy 17-byte
+# protocol shared by the X2/X2H/X2N/X3/Xlite CrazyLight family (VID 0x3710,
+# CID 0x57). cmd 0x12 = firmware, cmd 0x01 = identify (CID/MID + connection).
+
+_CMD_VERSION = 0x12
+_CMD_INFO = 0x01
+# Fixed challenge for the identify command; the reply mixes it in and we invert.
+_INFO_CHALLENGE = bytes([0x37, 0x11, 0x2A, 0x5C])
+
+# Connection code (from cmd 0x01) -> (kind, link rate Hz).
+_CONNECTION = {
+    0x00: ("wireless", 1000),
+    0x01: ("wireless", 4000),
+    0x02: ("wired", 1000),
+    0x03: ("wired", 8000),
+    0x04: ("wireless", 2000),
+    0x05: ("wireless", 8000),
+}
+
+# MID -> model name (subset of darthsoup's CmouseDeviceCatalog, CID 0x57).
+CMOUSE_MODELS = {
+    1: "X2 CrazyLight", 2: "X2 CrazyLight", 3: "X2 CrazyLight", 4: "X2 CrazyLight",
+    5: "X2 CrazyLight", 6: "X2 CrazyLight", 7: "TenZ", 8: "TenZ",
+    9: "X2 CrazyLight", 10: "X2 CrazyLight",
+    12: "X2 CrazyLight T1 Edition (Red)", 13: "X2 CrazyLight T1 Edition (Black)",
+    14: "X2 CrazyLight PRX Edition", 15: "X2 CrazyLight Boardzy Edition",
+    16: "X2 CrazyLight Randomfrankp Edition",
+    17: "Xlite CrazyLight (Black)", 18: "Xlite CrazyLight (White)",
+    19: "X3 CrazyLight (Black)", 20: "X3 CrazyLight (White)",
+    21: "X3 LHD CrazyLight (Black)", 22: "X3 LHD CrazyLight (White)",
+    23: "X2H CrazyLight (Black)", 24: "X2H CrazyLight (White)",
+    25: "X2N CrazyLight (Black)", 26: "X2N CrazyLight (White)",
+    27: "X2 CrazyLight Medium", 29: "X2H CrazyLight Medium",
+    34: "Xlite CrazyLight Medium",
+    70: "X2 CrazyLight Medium (White)", 71: "Xlite CrazyLight Medium (White)",
+    72: "X3 CrazyLight Medium (Black)", 73: "X3 CrazyLight Medium (White)",
+    76: "X2H CrazyLight Medium (White)", 77: "X2N CrazyLight Medium (Black)",
+    78: "X2N CrazyLight Medium (White)",
+}
+
+
+def _checksum(first16: bytes) -> int:
+    return (0x55 - (sum(first16) & 0xFF)) & 0xFF
+
+
+def _build_packet(cmd: int, payload: bytes = b"") -> bytes:
+    p = bytearray(17)
+    p[0] = _REPORT_ID
+    p[1] = cmd
+    p[2:2 + len(payload)] = payload
+    p[16] = _checksum(bytes(p[0:16]))
+    return bytes(p)
+
+
+def _send_and_read(dev, packet: bytes, expect_cmd: int, timeout_s: float) -> bytes | None:
+    _drain(dev)
+    dev.write(packet)
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        data = dev.read(17, 250)
+        if not data:
+            continue
+        payload = _normalize(data)
+        if len(payload) >= 8 and payload[0] == _REPORT_ID and payload[1] == expect_cmd:
+            return payload
+    return None
+
+
+def _query_version(dev) -> str | None:
+    payload = _send_and_read(dev, _build_packet(_CMD_VERSION), _CMD_VERSION, 0.8)
+    if payload is None or len(payload) < 8 or payload[2] != 0x00:
+        return None
+    major, minor = payload[6], payload[7]
+    if major == 0 and minor == 0:
+        return None
+    return f"{major:02d}.{minor:02X}"  # minor renders as hex, per the protocol
+
+
+def _query_info(dev) -> tuple[int, int, int] | None:
+    payload_out = bytearray(8)
+    payload_out[3] = 0x08
+    payload_out[4:8] = _INFO_CHALLENGE
+    payload = _send_and_read(dev, _build_packet(_CMD_INFO, bytes(payload_out)), _CMD_INFO, 0.8)
+    if payload is None or len(payload) < 14 or payload[2] != 0x00:
+        return None
+    decoded = bytearray(4)
+    for i in range(4):
+        decoded[i] = (payload[6 + i] - (_INFO_CHALLENGE[i] * (i + 1))
+                      - _INFO_CHALLENGE[(i + 1) % 4]) & 0xFF
+    if decoded[0] != payload[10] or decoded[1] != payload[11]:
+        return None  # cross-check with cleartext CID/MID failed
+    model_id = (decoded[0] << 8) | decoded[1]
+    return model_id, payload[12], payload[13]  # model_id, connection code, dongle type
+
+
+def read_device_info(mode: str = "auto") -> dict | None:
+    """Firmware / polling rate / model, or None. Needs the mouse awake."""
+    for info in _candidate_interfaces(mode):
+        dev = None
+        try:
+            dev = _open(info)
+            result: dict = {}
+            ver = _query_version(dev)
+            if ver:
+                result["firmware"] = ver
+            inf = _query_info(dev)
+            if inf is not None:
+                model_id, conn_code, _dongle = inf
+                mid = model_id & 0xFF
+                result["model"] = CMOUSE_MODELS.get(mid) or f"Pulsar mouse (id {mid})"
+                result["model_id"] = model_id
+                conn = _CONNECTION.get(conn_code)
+                if conn is not None:
+                    result["connection"], result["polling_hz"] = conn
+            if result:
+                return result
+        except (OSError, ValueError):
+            continue
+        finally:
+            if dev is not None:
+                try:
+                    dev.close()
+                except OSError:
+                    pass
+    return None
+
+
 def list_interfaces() -> list[dict]:
     """Diagnostic helper: every Pulsar HID interface hidapi can see."""
     return [
