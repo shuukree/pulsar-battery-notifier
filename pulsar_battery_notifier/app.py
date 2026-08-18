@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from . import __version__, config, notifications, updates
-from .device import BatteryStatus, DeviceNotFound, read_battery
+from .device import BatteryStatus, DeviceNotFound, current_device, read_battery
 from .estimate import RuntimeEstimator, format_hours, load_history, save_history
 from .history import BatteryLog
 from .thresholds import ThresholdEngine
@@ -151,6 +151,13 @@ class Notifier:
         est = None
         if reading.percent is not None and not reading.charging:
             est = self.estimator.hours_remaining()
+        dev_name = dev_conn = None
+        try:
+            info = current_device(self.settings.connection_mode)
+            if info is not None:
+                dev_name, dev_conn = info
+        except Exception:  # noqa: BLE001
+            pass
         payload = {
             "percent": reading.percent,
             "charging": reading.charging,
@@ -158,6 +165,8 @@ class Notifier:
             "device_present": reading.device_present,
             "at": reading.at,
             "estimate_hours": est,
+            "device_name": dev_name,
+            "device_conn": dev_conn,
         }
         try:
             path = config.state_path()

@@ -92,33 +92,46 @@ def _spawn(*args: str):
 def _draw_graph(cv, w, h, samples, latest, th, hours) -> None:
     cv.delete("all")
     now = time.time()
-    ml, mr, mt, mb = 34, 10, 8, 20
+    ml, mr, mt, mb = 34, 10, 8, 22
     x0, y0, x1, y1 = ml, mt, w - mr, h - mb
     if x1 <= x0 or y1 <= y0:
         return
 
+    # Fixed time domain = the whole selected range, so the axis reads as a real
+    # timeline (clock times) even when there's only a little data yet.
+    t_start = now - hours * 3600
+    t_end = now
+    dom = max(1.0, t_end - t_start)
+
     def yof(p):
         return y1 - max(0.0, min(100.0, p)) / 100.0 * (y1 - y0)
+
+    def xof(t):
+        return x0 + (min(max(t, t_start), t_end) - t_start) / dom * (x1 - x0)
 
     for lvl in (0, 50, 100):
         y = yof(lvl)
         cv.create_line(x0, y, x1, y, fill=th["grid"])
         cv.create_text(x0 - 6, y, text=str(lvl), fill=th["sub"], anchor="e", font=(_FONT, 8))
 
-    pts = [(t, p, c) for (t, p, c) in samples if t >= now - hours * 3600]
+    # X axis: clock-time ticks across the range, last one labelled "now".
+    ticks = 4
+    for i in range(ticks + 1):
+        t = t_start + dom * i / ticks
+        x = xof(t)
+        lbl = "now" if i == ticks else time.strftime("%H:%M", time.localtime(t))
+        cv.create_line(x, y1, x, y1 + 3, fill=th["border"])
+        cv.create_text(x, y1 + 10, text=lbl, fill=th["sub"], font=(_FONT, 8))
+    cv.create_line(x0, y1, x1, y1, fill=th["border"])
+
+    pts = [(t, p, c) for (t, p, c) in samples if t >= t_start]
     if latest and latest.get("percent") is not None:
-        pts = pts + [(latest.get("at", now), latest["percent"], bool(latest.get("charging")))]
+        pts = pts + [(min(latest.get("at", now), now), latest["percent"], bool(latest.get("charging")))]
     if len(pts) < 2:
         cv.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="Collecting data…",
                        fill=th["sub"], font=(_FONT, 9))
         return
-
-    tmin = pts[0][0]
-    tmax = max(now, pts[-1][0])
-    span = max(1.0, tmax - tmin)
-
-    def xof(t):
-        return x0 + (t - tmin) / span * (x1 - x0)
+    pts.sort()
 
     seg = None
     for i, (t, _p, c) in enumerate(pts):
@@ -132,12 +145,6 @@ def _draw_graph(cv, w, h, samples, latest, th, hours) -> None:
     for (t, p, _c) in pts:
         coords += [xof(t), yof(p)]
     cv.create_line(*coords, fill=th["line"], width=2, smooth=True)
-    cv.create_line(x0, y1, x1, y1, fill=th["border"])
-    for i in range(5):
-        t = tmin + span * i / 4
-        ago = (now - t) / 3600.0
-        lbl = "now" if ago < 0.05 else f"-{ago:.0f}h"
-        cv.create_text(xof(t), y1 + 9, text=lbl, fill=th["sub"], font=(_FONT, 8))
 
 
 def run_panel() -> None:
@@ -171,8 +178,10 @@ def run_panel() -> None:
     close.pack(side="right")
     close.bind("<Button-1>", lambda e: root.destroy())
 
-    status = tk.Label(card, text="", bg=th["card"], fg=th["fg"], font=(_FONT, 10), anchor="w")
-    status.pack(fill="x", padx=14)
+    status = tk.Label(card, text="", bg=th["card"], fg=th["fg"], font=(_FONT_SEMI, 13), anchor="w")
+    status.pack(fill="x", padx=14, pady=(2, 0))
+    device = tk.Label(card, text="", bg=th["card"], fg=th["sub"], font=(_FONT, 8), anchor="w")
+    device.pack(fill="x", padx=14)
 
     cv = tk.Canvas(card, bg=th["card"], highlightthickness=0, height=150)
     cv.pack(fill="both", expand=True, padx=8, pady=6)
@@ -213,6 +222,9 @@ def run_panel() -> None:
             pass
         st = read_state()
         status.config(text=status_line(st))
+        dn = st.get("device_name") if st else None
+        dc = st.get("device_conn") if st else None
+        device.config(text=(f"{dn} · {dc}" if dn else ""))
         _draw_graph(cv, cv.winfo_width() or W - 16, cv.winfo_height() or 150,
                     log.samples(), st, th, rng["hours"])
         root.after(1500, refresh)
@@ -247,9 +259,126 @@ def _to_int(value: str, default: int) -> int:
         return default
 
 
+def _flat_check(parent, text, var, th):
+    """A flat, custom-drawn checkbox (no Tk 3-D bevel)."""
+    import tkinter as tk
+
+    size = 18
+    f = tk.Frame(parent, bg=th["card"], cursor="hand2")
+    cv = tk.Canvas(f, width=size, height=size, bg=th["card"], highlightthickness=0, bd=0)
+    cv.pack(side="left")
+    lbl = tk.Label(f, text=text, bg=th["card"], fg=th["fg"], font=(_FONT, 10))
+    lbl.pack(side="left", padx=(8, 0))
+
+    def redraw():
+        cv.delete("all")
+        on = var.get()
+        cv.create_rectangle(1, 1, size - 2, size - 2,
+                            fill=th["accent"] if on else th["entry"],
+                            outline=th["accent"] if on else th["border"], width=1)
+        if on:
+            cv.create_line(4, 9, 8, 13, fill="#ffffff", width=2)
+            cv.create_line(8, 13, 14, 4, fill="#ffffff", width=2)
+
+    def toggle(_e=None):
+        var.set(not var.get())
+        redraw()
+
+    for w in (f, cv, lbl):
+        w.bind("<Button-1>", toggle)
+    redraw()
+    return f
+
+
+def _segmented(parent, var, options, th):
+    """A flat segmented control (like iOS/WinUI) for a small set of choices."""
+    import tkinter as tk
+
+    wrap = tk.Frame(parent, bg=th["border"])
+    btns = {}
+
+    def refresh():
+        for val, b in btns.items():
+            sel = val == var.get()
+            b.config(bg=th["accent"] if sel else th["card"], fg="#ffffff" if sel else th["sub"])
+
+    for val in options:
+        b = tk.Label(wrap, text=val, bg=th["card"], fg=th["sub"], font=(_FONT, 9),
+                     padx=12, pady=5, cursor="hand2")
+        b.pack(side="left", padx=1, pady=1)
+        b.bind("<Button-1>", lambda _e, v=val: (var.set(v), refresh()))
+        btns[val] = b
+    refresh()
+    return wrap
+
+
+def _uentry(parent, var, th, width=8):
+    """A flat underline-style number/text entry."""
+    import tkinter as tk
+
+    wrap = tk.Frame(parent, bg=th["border"])
+    e = tk.Entry(wrap, textvariable=var, width=width, bg=th["card"], fg=th["fg"],
+                 insertbackground=th["fg"], relief="flat", highlightthickness=0, bd=0,
+                 font=(_FONT, 10), justify="right")
+    e.pack(fill="x", padx=1, pady=(1, 2))
+    return wrap
+
+
+def _threshold_editor(parent, initial, th):
+    """Toggleable % chips + add-custom. Returns (widget, getter)."""
+    import tkinter as tk
+
+    presets = [50, 40, 30, 25, 20, 15, 10, 5, 1]
+    selected = {int(x) for x in initial}
+    state = {"levels": set(presets) | selected, "selected": selected}
+
+    wrap = tk.Frame(parent, bg=th["card"])
+    chips = tk.Frame(wrap, bg=th["card"])
+    chips.pack(fill="x")
+
+    def render():
+        for w in chips.winfo_children():
+            w.destroy()
+        for lvl in sorted(state["levels"], reverse=True):
+            on = lvl in state["selected"]
+            c = tk.Label(chips, text=f"{lvl}%", bg=th["accent"] if on else th["entry"],
+                         fg="#ffffff" if on else th["sub"], font=(_FONT, 9),
+                         padx=10, pady=4, cursor="hand2")
+            c.pack(side="left", padx=(0, 6), pady=3)
+
+            def tog(_e, level=lvl):
+                state["selected"].discard(level) if level in state["selected"] \
+                    else state["selected"].add(level)
+                render()
+
+            c.bind("<Button-1>", tog)
+
+    add = tk.Frame(wrap, bg=th["card"])
+    add.pack(fill="x", pady=(4, 0))
+    addvar = tk.StringVar()
+    _uentry(add, addvar, th, 4).pack(side="left")
+
+    def add_custom(_e=None):
+        try:
+            v = int(addvar.get())
+        except (TypeError, ValueError):
+            return
+        if 1 <= v <= 100:
+            state["levels"].add(v)
+            state["selected"].add(v)
+            addvar.set("")
+            render()
+
+    ab = tk.Label(add, text="+ Add", bg=th["btn"], fg=th["btn_fg"], font=(_FONT, 9),
+                  padx=10, pady=4, cursor="hand2")
+    ab.bind("<Button-1>", add_custom)
+    ab.pack(side="left", padx=(6, 0))
+    render()
+    return wrap, (lambda: sorted(state["selected"], reverse=True))
+
+
 def run_settings() -> None:
     import tkinter as tk
-    from tkinter import messagebox
 
     th = _theme()
     s = config.load()
@@ -266,7 +395,6 @@ def run_settings() -> None:
     tk.Label(outer, text="Changes apply to the running app within a few seconds.",
              bg=th["bg"], fg=th["sub"], font=(_FONT, 9)).pack(anchor="w", pady=(1, 10))
 
-    thresholds_var = tk.StringVar(value=", ".join(str(t) for t in s.thresholds))
     poll_var = tk.StringVar(value=str(s.poll_seconds))
     wake_var = tk.StringVar(value=str(s.wake_poll_seconds))
     mode_var = tk.StringVar(value=s.connection_mode)
@@ -282,79 +410,65 @@ def run_settings() -> None:
                         highlightthickness=1)
         card.pack(fill="x", pady=6)
         inner = tk.Frame(card, bg=th["card"])
-        inner.pack(fill="x", padx=14, pady=12)
+        inner.pack(fill="x", padx=16, pady=14)
         inner.columnconfigure(1, weight=1)
         tk.Label(inner, text=title.upper(), bg=th["card"], fg=th["accent"],
-                 font=(_FONT_SEMI, 9)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+                 font=(_FONT_SEMI, 9)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
         inner._row = 1  # type: ignore[attr-defined]
         return inner
 
     def field(inner, label, widget, hint=""):
         r = inner._row  # type: ignore[attr-defined]
         tk.Label(inner, text=label, bg=th["card"], fg=th["fg"],
-                 font=(_FONT, 10)).grid(row=r, column=0, sticky="w", pady=5, padx=(0, 12))
-        widget.grid(row=r, column=1, sticky="e", pady=5)
+                 font=(_FONT, 10)).grid(row=r, column=0, sticky="w", pady=6, padx=(0, 12))
+        widget.grid(row=r, column=1, sticky="e", pady=6)
         inner._row = r + 1  # type: ignore[attr-defined]
         if hint:
             tk.Label(inner, text=hint, bg=th["card"], fg=th["sub"],
                      font=(_FONT, 8)).grid(row=inner._row, column=0, columnspan=2, sticky="w")
             inner._row += 1  # type: ignore[attr-defined]
 
-    def check(inner, text, var):
+    def full_row(inner, widget):
         r = inner._row  # type: ignore[attr-defined]
-        c = tk.Checkbutton(inner, text=text, variable=var, bg=th["card"], fg=th["fg"],
-                           selectcolor=th["entry"], activebackground=th["card"],
-                           activeforeground=th["fg"], font=(_FONT, 10), anchor="w",
-                           highlightthickness=0, bd=0)
-        c.grid(row=r, column=0, columnspan=2, sticky="w", pady=3)
+        widget.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(2, 4))
         inner._row = r + 1  # type: ignore[attr-defined]
 
-    def entry(inner, var, width=10):
-        return tk.Entry(inner, textvariable=var, width=width, bg=th["entry"],
-                        fg=th["entry_fg"], insertbackground=th["fg"], relief="flat",
-                        highlightbackground=th["border"], highlightcolor=th["accent"],
-                        highlightthickness=1, font=(_FONT, 10), justify="right")
+    def add_check(inner, text, var):
+        r = inner._row  # type: ignore[attr-defined]
+        _flat_check(inner, text, var, th).grid(row=r, column=0, columnspan=2, sticky="w", pady=5)
+        inner._row = r + 1  # type: ignore[attr-defined]
 
     # Alerts
     a = section("Alerts")
-    field(a, "Alert thresholds (%)", entry(a, thresholds_var, 20),
-          "Comma-separated, e.g. 20, 15, 10, 5, 1")
-    check(a, "Beep on low battery", beep_var)
-    check(a, "Notify when fully charged", full_var)
-    field(a, "Full-charge level (%)", entry(a, full_lvl_var, 6))
+    tk.Label(a, text="Alert at these levels (click to toggle)", bg=th["card"], fg=th["fg"],
+             font=(_FONT, 10)).grid(row=a._row, column=0, columnspan=2, sticky="w")  # type: ignore[attr-defined]
+    a._row += 1  # type: ignore[attr-defined]
+    thr_editor, thr_get = _threshold_editor(a, s.thresholds, th)
+    full_row(a, thr_editor)
+    add_check(a, "Beep on low battery", beep_var)
+    add_check(a, "Notify when fully charged", full_var)
+    field(a, "Full-charge level (%)", _uentry(a, full_lvl_var, th, 5))
 
     # Polling
     p = section("Polling")
-    field(p, "Poll interval (s)", entry(p, poll_var, 6), "How often to check while awake (min 2)")
-    field(p, "Wake poll (s)", entry(p, wake_var, 6), "Faster interval while asleep/unknown")
-    om = tk.OptionMenu(p, mode_var, "auto", "wireless", "wired")
-    om.config(bg=th["btn"], fg=th["btn_fg"], activebackground=th["btn_hover"],
-              activeforeground=th["btn_fg"], highlightthickness=0, relief="flat",
-              font=(_FONT, 10), width=8, anchor="e")
-    om["menu"].config(bg=th["card"], fg=th["fg"], activebackground=th["accent"],
-                      activeforeground="#ffffff")
-    field(p, "Connection mode", om)
+    field(p, "Poll interval (s)", _uentry(p, poll_var, th, 5), "How often to check while awake (min 2)")
+    field(p, "Wake poll (s)", _uentry(p, wake_var, th, 5), "Faster interval while asleep/unknown")
+    field(p, "Connection mode", _segmented(p, mode_var, ["auto", "wireless", "wired"], th))
 
     # Display
     dsp = section("Display")
-    check(dsp, "Show time-to-empty estimate in tooltip", est_var)
+    add_check(dsp, "Show time-to-empty estimate in tooltip", est_var)
 
     # Updates
     u = section("Updates")
-    check(u, "Automatically check GitHub for updates", upd_var)
-    field(u, "Update check every (h)", entry(u, upd_hours_var, 6))
+    add_check(u, "Automatically check GitHub for updates", upd_var)
+    field(u, "Update check every (h)", _uentry(u, upd_hours_var, th, 5))
 
     status = tk.Label(outer, text="", bg=th["bg"], fg="#3fb56b", font=(_FONT, 9))
     status.pack(anchor="w", pady=(8, 0))
 
     def on_save():
-        raw = thresholds_var.get().replace(";", ",")
-        try:
-            thr = [int(x) for x in raw.split(",") if x.strip()]
-        except ValueError:
-            messagebox.showerror("Invalid thresholds",
-                                 "Thresholds must be numbers, e.g. 20, 15, 10, 5, 1")
-            return
+        thr = thr_get()
         new = config.Settings(
             thresholds=thr or list(config.DEFAULT_THRESHOLDS),
             poll_seconds=_to_int(poll_var.get(), s.poll_seconds),
