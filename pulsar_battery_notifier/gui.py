@@ -447,8 +447,7 @@ def _draw_mouse(cv, w, h, th):
 
 
 def _build_sidebar(parent, th, root, s):
-    """Left device column: model photo/glyph + live details. Returns a getter
-    for the currently selected model string ('' when Generic)."""
+    """Left device column: auto-detected model photo/glyph + live details."""
     import threading
     import tkinter as tk
 
@@ -458,8 +457,9 @@ def _build_sidebar(parent, th, root, s):
              font=(_FONT_SEMI, 9)).pack(anchor="w")
 
     imgbox = tk.Frame(pad, bg=th["card"], width=176, height=120)
-    imgbox.pack(pady=(10, 8))
+    imgbox.pack(pady=(12, 10))
     imgbox.pack_propagate(False)
+    auto = {"key": None}
 
     def show_glyph():
         for w in imgbox.winfo_children():
@@ -483,36 +483,14 @@ def _build_sidebar(parent, th, root, s):
         except Exception:  # noqa: BLE001
             show_glyph()
 
-    def load_image(model):
-        if not model or model == _GENERIC:
-            show_glyph()
-            return
-
+    def load_image(key):
         def work():
-            path = _model_image_path(model)
+            path = _model_image_path(key)
             root.after(0, lambda: show_image(path) if path else show_glyph())
 
         threading.Thread(target=work, daemon=True).start()
 
-    # Model picker.
-    picker = tk.Frame(pad, bg=th["card"])
-    picker.pack(fill="x", pady=(0, 8))
-    tk.Label(picker, text="Model", bg=th["card"], fg=th["sub"], font=(_FONT, 9)).pack(side="left")
-    model_var = tk.StringVar(value=s.model if s.model in MODEL_IMAGES else _GENERIC)
-    picked = {"user": s.model in MODEL_IMAGES}
-    auto = {"key": None}
-
-    def on_pick(_v=None):
-        picked["user"] = True
-        load_image(model_var.get())
-
-    om = tk.OptionMenu(picker, model_var, _GENERIC, *MODEL_IMAGES.keys(), command=on_pick)
-    om.config(bg=th["btn"], fg=th["btn_fg"], activebackground=th["btn_hover"],
-              activeforeground=th["btn_fg"], highlightthickness=0, relief="flat",
-              font=(_FONT, 9), anchor="e")
-    om["menu"].config(bg=th["card"], fg=th["fg"], activebackground=th["accent"],
-                      activeforeground="#ffffff")
-    om.pack(side="right")
+    show_glyph()
 
     name = tk.Label(pad, text="Detecting…", bg=th["card"], fg=th["fg"],
                     font=(_FONT_SEMI, 11), wraplength=180, justify="left", anchor="w")
@@ -542,12 +520,11 @@ def _build_sidebar(parent, th, root, s):
             name.config(text=model_txt)
         elif st.get("device_present") is False:
             name.config(text="No device connected")
-        # Auto-pick the photo from the detected model (until the user overrides).
-        if not picked["user"] and st.get("device_model"):
+        # Auto-pick the photo from the detected model family.
+        if st.get("device_model"):
             key = _image_key_for(st["device_model"])
             if key and key != auto["key"]:
                 auto["key"] = key
-                model_var.set(key)
                 load_image(key)
         rows["Connection"].config(text=st.get("device_conn") or "—")
         rows["Charging"].config(
@@ -557,9 +534,7 @@ def _build_sidebar(parent, th, root, s):
         rows["Firmware"].config(text=st.get("firmware") or "—")
         root.after(2000, refresh)
 
-    load_image(model_var.get())
     refresh()
-    return lambda: "" if model_var.get() == _GENERIC else model_var.get()
 
 
 def run_settings() -> None:
@@ -580,7 +555,7 @@ def run_settings() -> None:
                        highlightthickness=1, width=212)
     sidebar.pack(side="left", fill="y", padx=(0, 16))
     sidebar.pack_propagate(False)
-    model_get = _build_sidebar(sidebar, th, root, s)
+    _build_sidebar(sidebar, th, root, s)
 
     outer = tk.Frame(container, bg=th["bg"])
     outer.pack(side="left", fill="both", expand=True)
@@ -676,7 +651,7 @@ def run_settings() -> None:
             show_time_estimate=est_var.get(),
             notify_full=full_var.get(),
             full_level=_to_int(full_lvl_var.get(), s.full_level),
-            model=model_get(),
+            model=s.model,
         )
         config.save(new)
         status.config(text="Saved ✓  — applied within a few seconds.")

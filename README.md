@@ -42,7 +42,7 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
   editor for thresholds, intervals and toggles; changes apply live (no restart).
   A device column shows live status — **model name, firmware, polling rate,
   connection** — identified over the cMouse protocol, and **auto-picks your
-  mouse's photo** from pulsar.gg (cached locally; you can override the model).
+  mouse's photo** from pulsar.gg (cached locally).
 - Edit settings in the **Settings** window, or hand-edit the JSON — either way
   changes apply live (the app watches the file).
 - **Built-in updater**: checks GitHub for new releases in the background and
