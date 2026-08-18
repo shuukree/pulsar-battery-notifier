@@ -129,6 +129,17 @@ def status_text(reading: Reading) -> str:
     return f"Battery: {reading.percent}% \u2014 {state}{freshness}"
 
 
+def tooltip_text(reading: Reading) -> str:
+    """Short tray-tooltip line, e.g. 'Pulsar battery: 95% - Charging'."""
+    if not reading.device_present:
+        return "Pulsar battery: not connected"
+    if reading.percent is None:
+        return "Pulsar battery: unknown (asleep)"
+    state = "Charging" if reading.charging else "On battery"
+    suffix = "" if reading.fresh else " (last known)"
+    return f"Pulsar battery: {reading.percent}% - {state}{suffix}"
+
+
 def run_headless(settings: config.Settings) -> None:
     notifier = Notifier(settings)
     print(f"Pulsar Battery Notifier v{__version__} - thresholds {settings.thresholds}, "
@@ -419,7 +430,7 @@ def run_tray(settings: config.Settings) -> None:
     def on_update(reading: Reading) -> None:
         try:
             icon.icon = _make_icon_image(reading)
-            icon.title = f"Pulsar Battery \u2014 {status_text(reading)}"
+            icon.title = tooltip_text(reading)
         except Exception:  # noqa: BLE001
             pass
 
