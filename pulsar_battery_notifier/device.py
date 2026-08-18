@@ -179,14 +179,16 @@ def _read_cmd04_response(dev, timeout_s: float) -> bytes | None:
     return None
 
 
-def _query(dev) -> BatteryStatus | None:
+def _query(dev, warmup: bool = True) -> BatteryStatus | None:
     _drain(dev)
 
     dev.write(_CMD04)
     payload = _read_cmd04_response(dev, timeout_s=0.8)
 
-    if payload is None:
-        # Dongle may need warming up before it answers cmd04.
+    if payload is None and warmup:
+        # A cold vendor interface may ignore cmd04 until it's exercised. Once
+        # the mouse is awake a plain cmd04 answers, so callers that already have
+        # a good reading skip this to keep wake-up polling cheap.
         for frame in _WARMUP:
             dev.write(frame)
             time.sleep(0.01)
@@ -202,11 +204,15 @@ def _query(dev) -> BatteryStatus | None:
     return BatteryStatus(percent=percent, charging=charging)
 
 
-def read_battery(mode: str = "auto") -> BatteryStatus | None:
+def read_battery(mode: str = "auto", *, warmup: bool = True) -> BatteryStatus | None:
     """Return the current battery status, or ``None`` if the mouse didn't answer.
 
     A ``None`` return is normal and expected when the mouse is asleep (the dongle
     stops responding). Callers should treat it as "unknown", not "empty".
+
+    ``warmup`` replays a captured init sequence to coax a cold interface into
+    answering. It matters on the first read; once the mouse has answered once,
+    callers can pass ``warmup=False`` for cheap, fast wake-up polling.
 
     Raises
     ------
@@ -224,7 +230,7 @@ def read_battery(mode: str = "auto") -> BatteryStatus | None:
         dev = None
         try:
             dev = _open(info)
-            status = _query(dev)
+            status = _query(dev, warmup=warmup)
             if status is not None:
                 return status
         except (OSError, ValueError):

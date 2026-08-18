@@ -33,6 +33,9 @@ def config_path() -> Path:
 class Settings:
     thresholds: list[int] = field(default_factory=lambda: list(DEFAULT_THRESHOLDS))
     poll_seconds: int = DEFAULT_POLL_SECONDS
+    # Faster cadence used while the mouse is asleep/unknown, so we notice it
+    # waking within a few seconds instead of up to a full poll_seconds.
+    wake_poll_seconds: int = 12
     rearm_hysteresis: int = 3
     beep: bool = True
     # How long to trust the last reading while the mouse is asleep (dongle
@@ -51,6 +54,7 @@ class Settings:
         return Settings(
             thresholds=thresholds,
             poll_seconds=max(10, int(self.poll_seconds)),
+            wake_poll_seconds=max(5, int(self.wake_poll_seconds)),
             rearm_hysteresis=max(1, int(self.rearm_hysteresis)),
             beep=bool(self.beep),
             stale_grace_seconds=max(60, int(self.stale_grace_seconds)),

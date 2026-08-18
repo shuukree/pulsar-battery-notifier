@@ -40,6 +40,7 @@ class Notifier:
         self.engine = ThresholdEngine(settings.thresholds, settings.rearm_hysteresis)
         self._last_good: BatteryStatus | None = None
         self._last_good_at: float = 0.0
+        self._miss_streak = 0  # consecutive polls with no answer (asleep)
         self._stop = threading.Event()
         self._latest = Reading(None, False, False, False, 0.0)
         self._on_update = None  # optional callback(Reading) for the tray
@@ -51,13 +52,20 @@ class Notifier:
     def poll_once(self) -> Reading:
         now = time.time()
         device_present = True
+        # Once we've had a good reading the interface is warm, so a plain query
+        # catches the wake and we skip the slow warm-up. But every 5th miss we
+        # retry with warm-up in case the interface actually went cold.
+        warmup = self._last_good is None or (
+            self._miss_streak > 0 and self._miss_streak % 5 == 0
+        )
         try:
-            status = read_battery(self.settings.connection_mode)
+            status = read_battery(self.settings.connection_mode, warmup=warmup)
         except DeviceNotFound:
             status = None
             device_present = False
 
         if status is not None:
+            self._miss_streak = 0
             self._last_good = status
             self._last_good_at = now
             reading = Reading(status.percent, status.charging, True, True, now)
@@ -67,6 +75,7 @@ class Notifier:
                     alert, status.percent, beep=self.settings.beep
                 )
         else:
+            self._miss_streak += 1
             # Mouse asleep or unplugged. Reuse the last good reading within the
             # grace window so the tray doesn't flap to "unknown" constantly.
             within_grace = (
@@ -93,7 +102,14 @@ class Notifier:
                 self.poll_once()
             except Exception as exc:  # noqa: BLE001 - never let the loop die
                 print(f"[poll error] {exc}", file=sys.stderr)
-            self._stop.wait(self.settings.poll_seconds)
+            self._stop.wait(self._next_interval())
+
+    def _next_interval(self) -> int:
+        """Poll fast while asleep/unknown so we notice the mouse waking; relax
+        to the normal cadence once it's answering."""
+        if self._latest.fresh:
+            return max(1, self.settings.poll_seconds)
+        return max(1, min(self.settings.wake_poll_seconds, self.settings.poll_seconds))
 
     def stop(self) -> None:
         self._stop.set()
