@@ -145,6 +145,10 @@ and it resets whenever you charge or the battery jumps up, so a recharge never
 skews it. Expect it to be a rough guide that tightens the longer you're on
 battery, not a precise countdown.
 
+The sample history is saved to `discharge_history.json` in the config folder and
+reloaded on startup (pruned to the window), so the estimate survives restarts
+and app updates instead of recalibrating from scratch.
+
 ## Updating
 
 The app checks for new releases on startup and once a day. When one is found it

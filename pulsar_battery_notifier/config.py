@@ -29,6 +29,10 @@ def config_path() -> Path:
     return config_dir() / "settings.json"
 
 
+def history_path() -> Path:
+    return config_dir() / "discharge_history.json"
+
+
 @dataclass
 class Settings:
     thresholds: list[int] = field(default_factory=lambda: list(DEFAULT_THRESHOLDS))

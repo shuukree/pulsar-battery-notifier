@@ -12,6 +12,8 @@ so a recharge never poisons the slope.
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from collections import deque
 
@@ -32,6 +34,26 @@ class RuntimeEstimator:
 
     def reset(self) -> None:
         self._samples.clear()
+
+    def snapshot(self) -> list[list[float]]:
+        """Serialisable copy of the current samples."""
+        return [[t, p] for t, p in self._samples]
+
+    def restore(self, samples, now: float | None = None) -> None:
+        """Load persisted samples, dropping anything outside the time window."""
+        now = time.time() if now is None else now
+        cutoff = now - self.window_seconds
+        cleaned: list[tuple[float, float]] = []
+        for item in samples or ():
+            try:
+                t, p = float(item[0]), float(item[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if t > now + 60 or t < cutoff:  # future or too old -> skip
+                continue
+            cleaned.append((t, p))
+        cleaned.sort()
+        self._samples = deque(cleaned[-self.max_samples:])
 
     def add(self, percent: int | None, charging: bool, at: float | None = None) -> None:
         """Feed a reading. Charging / unknown / a jump up clears the window."""
@@ -80,6 +102,27 @@ class RuntimeEstimator:
         if hours <= 0 or hours > 240:  # sanity cap at 10 days
             return None
         return hours
+
+
+def save_history(path, samples) -> None:
+    """Persist samples to a JSON file (atomic write)."""
+    try:
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"samples": samples}, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass  # persistence is best-effort; never break the poll loop
+
+
+def load_history(path) -> list:
+    try:
+        if not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("samples", [])
+    except (OSError, ValueError):
+        return []
 
 
 def format_hours(hours: float | None) -> str | None:

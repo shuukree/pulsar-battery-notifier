@@ -20,7 +20,7 @@ from functools import lru_cache
 
 from . import __version__, config, notifications, updates
 from .device import BatteryStatus, DeviceNotFound, read_battery
-from .estimate import RuntimeEstimator, format_hours
+from .estimate import RuntimeEstimator, format_hours, load_history, save_history
 from .thresholds import ThresholdEngine
 
 
@@ -43,6 +43,13 @@ class Notifier:
         self._last_good_at: float = 0.0
         self._miss_streak = 0  # consecutive polls with no answer (asleep)
         self.estimator = RuntimeEstimator()
+        # Persisted discharge history so the estimate survives restarts.
+        self._history_path = config.history_path()
+        self._last_hist_save = 0.0
+        try:
+            self.estimator.restore(load_history(self._history_path))
+        except Exception:  # noqa: BLE001 - bad/old file must not block startup
+            pass
         self._stop = threading.Event()
         self._latest = Reading(None, False, False, False, 0.0)
         self._on_update = None  # optional callback(Reading) for the tray
@@ -71,6 +78,10 @@ class Notifier:
             self._last_good = status
             self._last_good_at = now
             self.estimator.add(status.percent, status.charging, now)
+            # Persist at most once a minute so a restart keeps the estimate.
+            if now - self._last_hist_save >= 60:
+                self._last_hist_save = now
+                save_history(self._history_path, self.estimator.snapshot())
             reading = Reading(status.percent, status.charging, True, True, now)
             alert = self.engine.update(status.percent, status.charging)
             if alert is not None:
@@ -116,6 +127,11 @@ class Notifier:
 
     def stop(self) -> None:
         self._stop.set()
+        # Flush the latest history so the estimate survives a clean exit.
+        try:
+            save_history(self._history_path, self.estimator.snapshot())
+        except Exception:  # noqa: BLE001
+            pass
 
     @property
     def latest(self) -> Reading:
