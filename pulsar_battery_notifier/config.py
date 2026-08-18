@@ -33,6 +33,10 @@ def history_path() -> Path:
     return config_dir() / "discharge_history.json"
 
 
+def battery_log_path() -> Path:
+    return config_dir() / "battery_log.json"
+
+
 @dataclass
 class Settings:
     thresholds: list[int] = field(default_factory=lambda: list(DEFAULT_THRESHOLDS))
@@ -51,6 +55,9 @@ class Settings:
     update_check_hours: int = 24
     # Show an estimated time-to-empty in the tray tooltip, e.g. "85% (~12h)".
     show_time_estimate: bool = True
+    # Notify once when charging reaches this level ("battery full, unplug").
+    notify_full: bool = True
+    full_level: int = 100
 
     def sanitized(self) -> "Settings":
         thresholds = sorted({int(t) for t in self.thresholds if 1 <= int(t) <= 100}, reverse=True)
@@ -68,6 +75,8 @@ class Settings:
             auto_update_check=bool(self.auto_update_check),
             update_check_hours=max(1, int(self.update_check_hours)),
             show_time_estimate=bool(self.show_time_estimate),
+            notify_full=bool(self.notify_full),
+            full_level=max(50, min(100, int(self.full_level))),
         )
 
 

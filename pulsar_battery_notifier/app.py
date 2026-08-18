@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from functools import lru_cache
 from . import __version__, config, notifications, updates
 from .device import BatteryStatus, DeviceNotFound, read_battery
 from .estimate import RuntimeEstimator, format_hours, load_history, save_history
+from .history import BatteryLog, render_chart
 from .thresholds import ThresholdEngine
 
 
@@ -50,6 +52,18 @@ class Notifier:
             self.estimator.restore(load_history(self._history_path))
         except Exception:  # noqa: BLE001 - bad/old file must not block startup
             pass
+        # Longer battery log for the history chart.
+        self.log = BatteryLog(config.battery_log_path())
+        try:
+            self.log.load()
+        except Exception:  # noqa: BLE001
+            pass
+        self._full_notified = False
+        self._seen_below_full = False
+        try:
+            self._settings_mtime = os.path.getmtime(config.config_path())
+        except OSError:
+            self._settings_mtime = None
         self._stop = threading.Event()
         self._latest = Reading(None, False, False, False, 0.0)
         self._on_update = None  # optional callback(Reading) for the tray
@@ -58,7 +72,26 @@ class Notifier:
         self._update_notified = False
 
     # -- polling -----------------------------------------------------------
+    def _maybe_reload_settings(self) -> None:
+        """Pick up edits to settings.json (from the GUI or a hand-edit) live."""
+        try:
+            m = os.path.getmtime(config.config_path())
+        except OSError:
+            return
+        if self._settings_mtime is None:
+            self._settings_mtime = m
+            return
+        if m != self._settings_mtime:
+            self._settings_mtime = m
+            try:
+                new = config.load()
+            except Exception:  # noqa: BLE001
+                return
+            self.settings = new
+            self.engine = ThresholdEngine(new.thresholds, new.rearm_hysteresis)
+
     def poll_once(self) -> Reading:
+        self._maybe_reload_settings()
         now = time.time()
         device_present = True
         # Once we've had a good reading the interface is warm, so a plain query
@@ -82,7 +115,10 @@ class Notifier:
             if now - self._last_hist_save >= 60:
                 self._last_hist_save = now
                 save_history(self._history_path, self.estimator.snapshot())
+                self.log.add(status.percent, status.charging, now)
+                self.log.save()
             reading = Reading(status.percent, status.charging, True, True, now)
+            self._check_full(status)
             alert = self.engine.update(status.percent, status.charging)
             if alert is not None:
                 notifications.notify_low_battery(
@@ -109,6 +145,25 @@ class Notifier:
             self._on_update(reading)
         return reading
 
+    def _check_full(self, status: BatteryStatus) -> None:
+        """Fire a 'battery full' toast once per charge cycle, only after we've
+        actually seen it charge up across the threshold (so booting with an
+        already-full, plugged-in mouse stays quiet)."""
+        if not status.charging:
+            self._full_notified = False  # re-arm for the next charge
+            self._seen_below_full = False
+            return
+        if status.percent < self.settings.full_level:
+            self._seen_below_full = True
+        if (
+            self.settings.notify_full
+            and not self._full_notified
+            and self._seen_below_full
+            and status.percent >= self.settings.full_level
+        ):
+            self._full_notified = True
+            notifications.notify_charged(status.percent, beep=self.settings.beep)
+
     # -- loop --------------------------------------------------------------
     def run(self) -> None:
         while not self._stop.is_set():
@@ -127,9 +182,10 @@ class Notifier:
 
     def stop(self) -> None:
         self._stop.set()
-        # Flush the latest history so the estimate survives a clean exit.
+        # Flush the latest history so the estimate/graph survive a clean exit.
         try:
             save_history(self._history_path, self.estimator.snapshot())
+            self.log.save()
         except Exception:  # noqa: BLE001
             pass
 
@@ -341,6 +397,30 @@ def run_tray(settings: config.Settings) -> None:
         except AttributeError:
             subprocess.Popen(["xdg-open", folder])
 
+    def _spawn_self(*args: str) -> None:
+        """Relaunch our own program with extra CLI args (e.g. --settings)."""
+        try:
+            if getattr(sys, "frozen", False):
+                subprocess.Popen([sys.executable, *args])
+            else:
+                subprocess.Popen([sys.executable, os.path.abspath(sys.argv[0]), *args])
+        except Exception:  # noqa: BLE001
+            pass
+
+    def on_settings(icon, item):
+        _spawn_self("--settings")
+
+    def on_history(icon, item):
+        def work() -> None:
+            try:
+                out = os.path.join(tempfile.gettempdir(), "pulsar_battery_history.png")
+                render_chart(notifier.log.samples(), out, hours=24)
+                os.startfile(out)  # type: ignore[attr-defined]  # Windows only
+            except Exception as exc:  # noqa: BLE001
+                notifications.notify_text("Battery history", f"Couldn't render chart: {exc}")
+
+        threading.Thread(target=work, daemon=True).start()
+
     def on_reload(icon, item):
         new_settings = config.load()
         notifier.settings = new_settings
@@ -496,10 +576,13 @@ def run_tray(settings: config.Settings) -> None:
             pystray.MenuItem(title_text, None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Check now", on_check_now),
+            pystray.MenuItem("Battery history…", on_history),
             pystray.MenuItem(
                 "Show time estimate", on_toggle_estimate,
                 checked=lambda item: notifier.settings.show_time_estimate,
             ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Settings…", on_settings),
             pystray.MenuItem(update_label, on_check_updates),
             pystray.MenuItem("Open config folder", on_open_config),
             pystray.MenuItem("Reload settings", on_reload),

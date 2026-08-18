@@ -31,6 +31,12 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
 - **Time-to-empty estimate** — hover the tray icon to see a predicted runtime,
   e.g. `Pulsar battery: 85% (~12h) - On battery`, inferred from the recent
   discharge slope. Toggle it from the tray menu.
+- **Fully-charged alert** — an optional toast when charging completes, so you
+  know when to unplug. Fires once per charge cycle.
+- **Battery history graph** — a **Battery history…** tray item renders a chart
+  of the last 24h (charging spans highlighted) and opens it.
+- **Settings window** — a **Settings…** tray item opens a small editor for
+  thresholds, intervals and toggles; changes apply live (no restart).
 - Config is a plain JSON file you can hand-edit; reload from the tray.
 - **Built-in updater**: checks GitHub for new releases in the background and
   offers a one-click **Check for updates** in the tray menu that downloads and
@@ -110,7 +116,9 @@ settings**.
   "connection_mode": "auto",
   "auto_update_check": true,
   "update_check_hours": 24,
-  "show_time_estimate": true
+  "show_time_estimate": true,
+  "notify_full": true,
+  "full_level": 100
 }
 ```
 
@@ -133,6 +141,11 @@ immediately.
 - **update_check_hours** — how often the background check runs (hours).
 - **show_time_estimate** — show the predicted time-to-empty in the tooltip (also
   toggleable from the tray menu).
+- **notify_full** — toast once when charging reaches **full_level**.
+- **full_level** — the % considered "full" for that alert (50–100).
+
+Settings can also be edited from the tray's **Settings…** window; saving there
+takes effect within a few seconds (the app watches the file).
 
 ## Time-to-empty estimate
 

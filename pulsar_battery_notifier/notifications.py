@@ -58,6 +58,15 @@ def notify_low_battery(threshold: int, percent: int, *, beep: bool = True) -> No
         _beep(urgent=threshold <= 5)
 
 
+def notify_charged(percent: int, *, beep: bool = True) -> None:
+    """Show a 'battery full' toast when charging completes."""
+    title = "Mouse battery full"
+    body = f"Pulsar mouse at {percent}% - you can unplug the charger."
+    notify_text(title, body)
+    if beep:
+        _beep(urgent=False)
+
+
 def notify_text(title: str, body: str) -> None:
     """Generic informational toast (used for 'check now' etc.)."""
     if _toaster is not None and Toast is not None:

@@ -29,8 +29,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--console", action="store_true", help="run in console instead of tray")
     parser.add_argument("--once", action="store_true", help="print battery once and exit")
     parser.add_argument("--list-devices", action="store_true", help="list Pulsar HID interfaces")
+    parser.add_argument("--settings", action="store_true", help="open the settings window")
+    parser.add_argument("--history", action="store_true", help="render + open the battery history chart")
     parser.add_argument("--mode", choices=["auto", "wireless", "wired"], help="override connection mode")
     args = parser.parse_args(argv)
+
+    if args.settings:
+        from pulsar_battery_notifier.gui import run_settings
+        run_settings()
+        return 0
+
+    if args.history:
+        import os
+        import tempfile
+        from pulsar_battery_notifier.history import BatteryLog, render_chart
+        log = BatteryLog(config.battery_log_path())
+        log.load()
+        out = os.path.join(tempfile.gettempdir(), "pulsar_battery_history.png")
+        render_chart(log.samples(), out, hours=24)
+        os.startfile(out)  # type: ignore[attr-defined]  # Windows only
+        return 0
 
     settings = config.load()
     if args.mode:
