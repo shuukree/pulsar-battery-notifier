@@ -1,0 +1,63 @@
+name: Build Windows exe
+
+# Build the .exe on a real Windows runner. Two ways to trigger:
+#   * Push a tag like v1.0.0  -> builds AND publishes a GitHub Release with the exe attached.
+#   * "Run workflow" button    -> builds and uploads the exe as a downloadable artifact.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create a Release on tag pushes
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build exe
+        run: |
+          python -m PyInstaller --clean --noconfirm --onefile --windowed `
+            --name "PulsarBatteryNotifier" `
+            --collect-all "windows_toasts" `
+            --hidden-import "winrt.windows.foundation.collections" `
+            --optimize 2 `
+            main.py
+
+      - name: Smoke test (headless one-shot must not crash)
+        # No mouse on the runner, so this exits non-zero (dongle not found) —
+        # that's expected. We only fail the build if the exe can't even start.
+        run: |
+          $p = Start-Process -FilePath "dist\PulsarBatteryNotifier.exe" `
+            -ArgumentList "--once" -PassThru -Wait
+          Write-Host "exit code: $($p.ExitCode)"
+          if ($p.ExitCode -gt 2) { exit 1 }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PulsarBatteryNotifier
+          path: dist/PulsarBatteryNotifier.exe
+
+      - name: Publish Release (on tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PulsarBatteryNotifier.exe
+          generate_release_notes: true
