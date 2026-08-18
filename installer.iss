@@ -27,6 +27,7 @@ AppSupportURL={#AppUrl}/issues
 DefaultDirName={autopf}\Pulsar Battery Notifier
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#AppExe}
+SetupIconFile=assets\app.ico
 OutputDir=dist
 OutputBaseFilename=PulsarBatteryNotifier-Setup
 Compression=lzma2

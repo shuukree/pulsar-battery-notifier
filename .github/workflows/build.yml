@@ -35,6 +35,7 @@ jobs:
         run: |
           python -m PyInstaller --clean --noconfirm --onefile --windowed `
             --name "PulsarBatteryNotifier" `
+            --icon "assets\app.ico" `
             --collect-all "windows_toasts" `
             --hidden-import "winrt.windows.foundation.collections" `
             --optimize 2 `

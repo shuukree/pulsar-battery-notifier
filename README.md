@@ -1,5 +1,7 @@
 # Pulsar Battery Notifier
 
+<img src="assets/app.png" alt="Pulsar Battery Notifier icon" width="96" align="right">
+
 A tiny Windows background app that watches your **Pulsar X2 Crazylight** mouse
 battery and pops a toast (plus a beep) as it drops past thresholds you choose —
 by default **20%, 15%, 10%, 5%, and 1%**. It runs quietly in the system tray

@@ -8,6 +8,7 @@ pip install pyinstaller
 
 python -m PyInstaller --clean --noconfirm --onefile --windowed `
   --name "PulsarBatteryNotifier" `
+  --icon "assets\app.ico" `
   --hidden-import "winrt.windows.foundation.collections" `
   --collect-all "windows_toasts" `
   --optimize 2 `
