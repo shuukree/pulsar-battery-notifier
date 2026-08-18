@@ -1,21 +1,24 @@
-# Builds a single-file, windowed Windows executable.
+# Builds a windowed Windows app as a one-dir bundle (a folder), which avoids the
+# one-file self-extraction that trips PyInstaller's parent-process security check
+# during in-app updates.
 # Run from the repo root in PowerShell:  .\build.ps1
 #
-# Output: dist\PulsarBatteryNotifier.exe
+# Output: dist\PulsarBatteryNotifier\PulsarBatteryNotifier.exe (+ support files)
 
 pip install -r requirements.txt
 pip install pyinstaller
 
-python -m PyInstaller --clean --noconfirm --onefile --windowed `
+python -m PyInstaller --clean --noconfirm --onedir --windowed `
   --name "PulsarBatteryNotifier" `
   --icon "assets\app.ico" `
+  --add-data "assets\device_default.png;assets" `
   --hidden-import "winrt.windows.foundation.collections" `
   --collect-all "windows_toasts" `
   --optimize 2 `
   main.py
 
 Write-Host ""
-Write-Host "Built: dist\PulsarBatteryNotifier.exe"
+Write-Host "Built: dist\PulsarBatteryNotifier\PulsarBatteryNotifier.exe"
 
 # If Inno Setup is installed, also build the friendly installer (setup.exe).
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"

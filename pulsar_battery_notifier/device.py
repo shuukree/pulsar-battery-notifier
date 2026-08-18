@@ -348,16 +348,109 @@ def _query_info(dev) -> tuple[int, int, int] | None:
     return model_id, payload[12], payload[13]  # model_id, connection code, dongle type
 
 
+_CMD_ONLINE = 0x03
+_CMD_DRIVER = 0x02
+_CMD_EEPROM_READ = 0x08
+_CMD_DONGLE_VERSION = 0x1D
+_ADDR_REPORT_RATE = 0x0000
+# EEPROM polling-rate code -> Hz (the *actual* report rate the user set).
+_POLLING_HZ = {0x08: 125, 0x04: 250, 0x02: 500, 0x01: 1000, 0x10: 2000, 0x20: 4000, 0x40: 8000}
+
+
+def _build_command_packet(cmd: int, data: bytes = b"") -> bytes:
+    """cMouse command frame: length at byte 5, data at byte 6 (vs. _build_packet)."""
+    p = bytearray(17)
+    p[0] = _REPORT_ID
+    p[1] = cmd
+    p[5] = len(data)
+    p[6:6 + len(data)] = data
+    p[16] = _checksum(bytes(p[0:16]))
+    return bytes(p)
+
+
+def _read_matching(dev, expect_cmd: int, timeout_s: float) -> bytes | None:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        data = dev.read(17, 250)
+        if not data:
+            continue
+        p = _normalize(data)
+        if len(p) >= 7 and p[0] == _REPORT_ID and p[1] == expect_cmd:
+            return p
+    return None
+
+
+def _wait_online(dev, timeout_s: float = 1.5) -> bool:
+    """Block until the mouse itself is reachable (not just the receiver)."""
+    pkt = _build_packet(_CMD_ONLINE)
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            dev.write(pkt)
+        except OSError:
+            return False
+        r = _read_matching(dev, _CMD_ONLINE, 0.4)
+        if r is not None and len(r) > 10 and r[6] == 0x01 and r[10] == 0x00:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def _query_dongle_version(dev) -> str | None:
+    payload = _send_and_read(dev, _build_packet(_CMD_DONGLE_VERSION), _CMD_DONGLE_VERSION, 0.8)
+    if payload is None or len(payload) < 8 or payload[2] != 0x00:
+        return None
+    major, minor = payload[6], payload[7]
+    if major == 0 and minor == 0:
+        return None
+    return f"{major:02d}.{minor:02X}"
+
+
+def _read_polling_hz(dev) -> int | None:
+    """Read the real report rate from EEPROM (needs the mouse awake + online)."""
+    if not _wait_online(dev):
+        return None
+    try:
+        dev.write(_build_command_packet(_CMD_DRIVER, bytes([0x01])))  # announce driver
+    except OSError:
+        return None
+    _read_matching(dev, _CMD_DRIVER, 0.5)
+    pkt = _build_packet(_CMD_EEPROM_READ, bytes([0x00, 0x00, 0x00, 0x06]))
+    try:
+        for _ in range(5):
+            try:
+                dev.write(pkt)
+            except OSError:
+                return None
+            resp = _read_matching(dev, _CMD_EEPROM_READ, 0.8)
+            if (resp is not None and resp[2] == 0 and resp[3] == 0
+                    and resp[4] == 0 and resp[5] == 6):
+                code, check = resp[6], resp[7]
+                if ((code + check) & 0xFF) == 0x55:
+                    return _POLLING_HZ.get(code)
+        return None
+    finally:
+        # Release the driver so we don't hold it against Pulsar Fusion.
+        try:
+            dev.write(_build_command_packet(_CMD_DRIVER, bytes([0x00])))
+        except OSError:
+            pass
+
+
 def read_device_info(mode: str = "auto") -> dict | None:
-    """Firmware / polling rate / model, or None. Needs the mouse awake."""
+    """Model / firmware / dongle firmware / polling rate, or None. Mouse must be awake."""
     for info in _candidate_interfaces(mode):
         dev = None
         try:
             dev = _open(info)
             result: dict = {}
+            _query(dev, warmup=True)  # wake the mouse so version/EEPROM answer
             ver = _query_version(dev)
             if ver:
                 result["firmware"] = ver
+            dver = _query_dongle_version(dev)
+            if dver:
+                result["dongle_firmware"] = dver
             inf = _query_info(dev)
             if inf is not None:
                 model_id, conn_code, _dongle = inf
@@ -366,7 +459,10 @@ def read_device_info(mode: str = "auto") -> dict | None:
                 result["model_id"] = model_id
                 conn = _CONNECTION.get(conn_code)
                 if conn is not None:
-                    result["connection"], result["polling_hz"] = conn
+                    result["connection"], result["link_hz"] = conn
+            poll = _read_polling_hz(dev)
+            if poll is not None:
+                result["polling_hz"] = poll  # real report rate, not the link rate
             if result:
                 return result
         except (OSError, ValueError):

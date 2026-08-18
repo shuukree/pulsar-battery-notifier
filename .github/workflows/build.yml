@@ -31,11 +31,12 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build exe
+      - name: Build app (one-dir)
         run: |
-          python -m PyInstaller --clean --noconfirm --onefile --windowed `
+          python -m PyInstaller --clean --noconfirm --onedir --windowed `
             --name "PulsarBatteryNotifier" `
             --icon "assets\app.ico" `
+            --add-data "assets\device_default.png;assets" `
             --collect-all "windows_toasts" `
             --hidden-import "winrt.windows.foundation.collections" `
             --optimize 2 `
@@ -45,7 +46,7 @@ jobs:
         # No mouse on the runner, so this exits non-zero (dongle not found) —
         # that's expected. We only fail the build if the exe can't even start.
         run: |
-          $p = Start-Process -FilePath "dist\PulsarBatteryNotifier.exe" `
+          $p = Start-Process -FilePath "dist\PulsarBatteryNotifier\PulsarBatteryNotifier.exe" `
             -ArgumentList "--once" -PassThru -Wait
           Write-Host "exit code: $($p.ExitCode)"
           if ($p.ExitCode -gt 2) { exit 1 }
@@ -60,13 +61,16 @@ jobs:
           Write-Host "Installer version: $v"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=$v installer.iss
 
+      - name: Zip portable bundle
+        run: Compress-Archive -Path "dist\PulsarBatteryNotifier\*" -DestinationPath "dist\PulsarBatteryNotifier-portable.zip" -Force
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: PulsarBatteryNotifier
           path: |
-            dist/PulsarBatteryNotifier.exe
             dist/PulsarBatteryNotifier-Setup.exe
+            dist/PulsarBatteryNotifier-portable.zip
 
       - name: Publish Release (on tag push only)
         if: startsWith(github.ref, 'refs/tags/')
@@ -74,5 +78,5 @@ jobs:
         with:
           files: |
             dist/PulsarBatteryNotifier-Setup.exe
-            dist/PulsarBatteryNotifier.exe
+            dist/PulsarBatteryNotifier-portable.zip
           generate_release_notes: true

@@ -36,6 +36,20 @@ MODEL_IMAGES = {
 _GENERIC = "Generic (no photo)"
 
 
+def _resource(rel: str) -> str:
+    """Path to a bundled resource, handling the PyInstaller onefile temp dir."""
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return os.path.join(base, rel)
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), rel)
+
+
+def _default_image_path():
+    """Bundled black X2 CrazyLight photo, used when nothing else is available."""
+    p = _resource(os.path.join("assets", "device_default.png"))
+    return p if os.path.exists(p) else None
+
+
 def _image_key_for(model_name: str):
     """Map a detected model name to a MODEL_IMAGES key (by family)."""
     n = (model_name or "").lower()
@@ -131,6 +145,52 @@ def _work_area() -> tuple[int, int, int, int]:
         return rect.left, rect.top, rect.right, rect.bottom
     except Exception:  # noqa: BLE001
         return 0, 0, 1920, 1040
+
+
+def run_alert(message: str, level: str = "low") -> None:
+    """A topmost banner shown on low battery — visible over borderless-fullscreen
+    games (unlike toasts, which Focus Assist / exclusive fullscreen can suppress).
+    Launched as its own process: `main.py --alert TEXT [--alert-level critical]`.
+    """
+    import tkinter as tk
+
+    accent = "#e8483c" if level == "critical" else "#f5a623"
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    try:
+        root.attributes("-alpha", 0.96)
+        root.wm_attributes("-toolwindow", True)  # keep it off the taskbar
+    except Exception:  # noqa: BLE001
+        pass
+
+    W, H = 460, 96
+    l, t, r, b = _work_area()
+    x = l + ((r - l) - W) // 2
+    y = t + 24
+    root.geometry(f"{W}x{H}+{x}+{y}")
+    root.configure(bg="#111317")
+
+    bar = tk.Frame(root, bg=accent, width=6)
+    bar.pack(side="left", fill="y")
+    body = tk.Frame(root, bg="#111317")
+    body.pack(side="left", fill="both", expand=True, padx=16, pady=12)
+    tk.Label(body, text="Pulsar mouse battery", bg="#111317", fg="#9aa0a6",
+             font=(_FONT, 9), anchor="w").pack(fill="x")
+    tk.Label(body, text=message, bg="#111317", fg="#ffffff",
+             font=(_FONT_SEMI, 14), anchor="w", wraplength=W - 60,
+             justify="left").pack(fill="x", pady=(2, 0))
+
+    for w in (root, body):
+        w.bind("<Button-1>", lambda e: root.destroy())
+    root.bind("<Escape>", lambda e: root.destroy())
+    root.after(6000, root.destroy)  # auto-dismiss
+    try:
+        root.lift()
+        root.focus_force()
+    except Exception:  # noqa: BLE001
+        pass
+    root.mainloop()
 
 
 def _spawn(*args: str):
@@ -280,7 +340,8 @@ def run_panel() -> None:
         model = st.get("device_model") or st.get("device_name") if st else None
         dc = st.get("device_conn") if st else None
         hz = st.get("polling_hz") if st else None
-        parts = [p for p in (model, dc, f"{hz} Hz" if hz else None) if p]
+        parts = [p for p in (model, dc.capitalize() if dc else None,
+                             f"{hz} Hz" if hz else None) if p]
         device.config(text="  ·  ".join(parts))
         _draw_graph(cv, cv.winfo_width() or W - 16, cv.winfo_height() or 150,
                     log.samples(), st, th, rng["hours"])
@@ -481,23 +542,31 @@ def _build_sidebar(parent, th, root, s):
             lbl.image = photo  # keep a reference
             lbl.pack(expand=True)
         except Exception:  # noqa: BLE001
+            show_default()
+
+    def show_default():
+        """Fallback: the bundled black X2 CrazyLight photo (never the glyph)."""
+        path = _default_image_path()
+        if path:
+            show_image(path)
+        else:
             show_glyph()
 
     def load_image(key):
         def work():
             path = _model_image_path(key)
-            root.after(0, lambda: show_image(path) if path else show_glyph())
+            root.after(0, lambda: show_image(path) if path else show_default())
 
         threading.Thread(target=work, daemon=True).start()
 
-    show_glyph()
+    show_default()
 
     name = tk.Label(pad, text="Detecting…", bg=th["card"], fg=th["fg"],
                     font=(_FONT_SEMI, 11), wraplength=180, justify="left", anchor="w")
     name.pack(fill="x")
 
     rows = {}
-    for key in ("Connection", "Charging", "Battery", "Polling", "Firmware"):
+    for key in ("Connection", "Charging", "Battery", "Polling", "Firmware", "Dongle fw"):
         r = tk.Frame(pad, bg=th["card"])
         r.pack(fill="x", pady=4)
         tk.Label(r, text=key, bg=th["card"], fg=th["sub"], font=(_FONT, 9)).pack(side="left")
@@ -526,12 +595,14 @@ def _build_sidebar(parent, th, root, s):
             if key and key != auto["key"]:
                 auto["key"] = key
                 load_image(key)
-        rows["Connection"].config(text=st.get("device_conn") or "—")
+        conn = st.get("device_conn")
+        rows["Connection"].config(text=conn.capitalize() if conn else "—")
         rows["Charging"].config(
             text="Yes" if st.get("charging") else ("No" if pct is not None else "—"))
         rows["Battery"].config(text=f"{pct}%" if pct is not None else "—")
         rows["Polling"].config(text=f"{st['polling_hz']} Hz" if st.get("polling_hz") else "—")
         rows["Firmware"].config(text=st.get("firmware") or "—")
+        rows["Dongle fw"].config(text=st.get("dongle_firmware") or "—")
         root.after(2000, refresh)
 
     refresh()
@@ -573,6 +644,7 @@ def run_settings() -> None:
     est_var = tk.BooleanVar(value=s.show_time_estimate)
     full_var = tk.BooleanVar(value=s.notify_full)
     upd_var = tk.BooleanVar(value=s.auto_update_check)
+    overlay_var = tk.BooleanVar(value=s.overlay_alert)
 
     def section(title: str):
         card = tk.Frame(outer, bg=th["card"], highlightbackground=th["border"],
@@ -615,6 +687,7 @@ def run_settings() -> None:
     thr_editor, thr_get = _threshold_editor(a, s.thresholds, th)
     full_row(a, thr_editor)
     add_check(a, "Beep on low battery", beep_var)
+    add_check(a, "On-screen banner in games (topmost)", overlay_var)
     add_check(a, "Notify when fully charged", full_var)
     field(a, "Full-charge level (%)", _uentry(a, full_lvl_var, th, 5))
 
@@ -652,6 +725,7 @@ def run_settings() -> None:
             notify_full=full_var.get(),
             full_level=_to_int(full_lvl_var.get(), s.full_level),
             model=s.model,
+            overlay_alert=overlay_var.get(),
         )
         config.save(new)
         status.config(text="Saved ✓  — applied within a few seconds.")

@@ -43,7 +43,8 @@ ArchitecturesInstallIn64BitMode=x64
 Name: "startupicon"; Description: "Start automatically when I sign in to Windows"; GroupDescription: "Startup:"
 
 [Files]
-Source: "dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+; One-dir bundle: ship the whole program folder.
+Source: "dist\PulsarBatteryNotifier\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Pulsar Battery Notifier"; Filename: "{app}\{#AppExe}"

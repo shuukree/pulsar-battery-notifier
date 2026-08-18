@@ -64,6 +64,8 @@ class Settings:
     full_level: int = 100
     # User-picked mouse model (for the device photo in Settings). "" = none.
     model: str = ""
+    # Show a topmost on-screen banner on low-battery alerts (visible in games).
+    overlay_alert: bool = True
 
     def sanitized(self) -> "Settings":
         thresholds = sorted({int(t) for t in self.thresholds if 1 <= int(t) <= 100}, reverse=True)
@@ -84,6 +86,7 @@ class Settings:
             notify_full=bool(self.notify_full),
             full_level=max(50, min(100, int(self.full_level))),
             model=str(self.model or ""),
+            overlay_alert=bool(self.overlay_alert),
         )
 
 

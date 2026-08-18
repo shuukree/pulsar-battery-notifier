@@ -26,6 +26,9 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
   reading jumped (e.g. 22% → 4% → single "very low" toast, not four).
 - Re-arms automatically when you charge back up.
 - Never alerts while the mouse is charging.
+- Low-battery alert shows a toast **and** a topmost on-screen banner that stays
+  visible over borderless-fullscreen games (plus the beep, which is audible even
+  in exclusive fullscreen). Toggle the banner in Settings.
 - Tray icon shows the **battery % as a colour-coded number** — green (≥50),
   orange (≥20), red (<20), blue while charging, and `??` when there's no reading.
 - **Auto taskbar-theme detection** — digit colours and outline adapt to Windows
@@ -41,8 +44,9 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
 - **Settings window** — a **Settings…** tray item opens a themed, sectioned
   editor for thresholds, intervals and toggles; changes apply live (no restart).
   A device column shows live status — **model name, firmware, polling rate,
-  connection** — identified over the cMouse protocol, and **auto-picks your
-  mouse's photo** from pulsar.gg (cached locally).
+  connection, real polling rate** (read from EEPROM) and **dongle firmware** —
+  all over the cMouse protocol, and **auto-picks your mouse's photo** from
+  pulsar.gg (cached locally).
 - Edit settings in the **Settings** window, or hand-edit the JSON — either way
   changes apply live (the app watches the file).
 - **Built-in updater**: checks GitHub for new releases in the background and
@@ -76,8 +80,9 @@ in the system tray next to the clock.
 > Windows SmartScreen may show a blue "unknown publisher" warning — expected for
 > an unsigned hobby build. Click **More info → Run anyway**.
 
-Prefer a portable single file? Grab **`PulsarBatteryNotifier.exe`** from the same
-Release and run it directly — no install.
+Prefer portable? Grab **`PulsarBatteryNotifier-portable.zip`** from the same
+Release, extract it anywhere, and run `PulsarBatteryNotifier.exe` inside — no
+install.
 
 ## Install (from source)
 
@@ -125,7 +130,8 @@ settings**.
   "update_check_hours": 24,
   "show_time_estimate": true,
   "notify_full": true,
-  "full_level": 100
+  "full_level": 100,
+  "overlay_alert": true
 }
 ```
 
@@ -148,6 +154,8 @@ immediately.
 - **update_check_hours** — how often the background check runs (hours).
 - **show_time_estimate** — show the predicted time-to-empty in the tooltip (also
   toggleable from the tray menu).
+- **overlay_alert** — also show a topmost on-screen banner on low-battery
+  alerts, so it's visible over borderless-fullscreen games.
 - **notify_full** — toast once when charging reaches **full_level**.
 - **full_level** — the % considered "full" for that alert (50–100).
 
@@ -198,7 +206,8 @@ shortcut in:
 .\build.ps1
 ```
 
-Produces `dist\PulsarBatteryNotifier.exe`. Windows SmartScreen may warn about an
+Produces the one-dir bundle `dist\PulsarBatteryNotifier\` (run
+`PulsarBatteryNotifier.exe` inside). Windows SmartScreen may warn about an
 unknown publisher — expected for an unsigned hobby build.
 
 If [Inno Setup](https://jrsoftware.org/isdl.php) is installed, `build.ps1` also

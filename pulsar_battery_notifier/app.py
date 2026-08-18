@@ -119,8 +119,9 @@ class Notifier:
             self._last_good = status
             self._last_good_at = now
             self.estimator.add(status.percent, status.charging, now)
-            # Refresh firmware/polling/model occasionally (mouse must be awake).
-            if not self._devinfo or now - self._devinfo_at >= 60:
+            # Refresh firmware/polling/model. Retry until we have the full set,
+            # then only every 5 min (the read wakes the mouse + touches EEPROM).
+            if not self._devinfo.get("polling_hz") or now - self._devinfo_at >= 300:
                 self._devinfo_at = now
                 try:
                     di = read_device_info(self.settings.connection_mode)
@@ -141,6 +142,11 @@ class Notifier:
                 notifications.notify_low_battery(
                     alert, status.percent, beep=self.settings.beep
                 )
+                if self.settings.overlay_alert:
+                    _spawn_self(
+                        "--alert", f"Battery {status.percent}% — charge it soon",
+                        "--alert-level", "critical" if alert <= 5 else "low",
+                    )
         else:
             self._miss_streak += 1
             # Mouse asleep or unplugged. Reuse the last good reading within the
@@ -188,6 +194,7 @@ class Notifier:
             "device_conn": di.get("connection") or dev_conn,
             "device_model": di.get("model"),
             "firmware": di.get("firmware"),
+            "dongle_firmware": di.get("dongle_firmware"),
             "polling_hz": di.get("polling_hz"),
         }
         try:
@@ -376,6 +383,16 @@ def _enable_dark_menus() -> None:
         pass
 
 
+def _spawn_self(*args: str):
+    """Relaunch our own program with extra CLI args (e.g. --panel, --alert)."""
+    try:
+        if getattr(sys, "frozen", False):
+            return subprocess.Popen([sys.executable, *args])
+        return subprocess.Popen([sys.executable, os.path.abspath(sys.argv[0]), *args])
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _level_key(reading: Reading) -> str:
     """'charging' | 'green' | 'orange' | 'red' | 'grey' for the current state."""
     if reading.percent is not None and reading.charging:
@@ -471,15 +488,6 @@ def run_tray(settings: config.Settings) -> None:
             subprocess.Popen(["xdg-open", folder])
 
     _panel_proc = {"p": None}
-
-    def _spawn_self(*args: str):
-        """Relaunch our own program with extra CLI args (e.g. --panel)."""
-        try:
-            if getattr(sys, "frozen", False):
-                return subprocess.Popen([sys.executable, *args])
-            return subprocess.Popen([sys.executable, os.path.abspath(sys.argv[0]), *args])
-        except Exception:  # noqa: BLE001
-            return None
 
     def on_settings(icon, item):
         _spawn_self("--settings")
