@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 
 from . import __version__, config, notifications, updates
 from .device import BatteryStatus, DeviceNotFound, read_battery
@@ -129,40 +130,69 @@ def run_headless(settings: config.Settings) -> None:
 
 # -- tray ------------------------------------------------------------------
 
+# Windows fonts we prefer for the big tray number, in order.
+_FONT_CANDIDATES = (
+    r"C:\Windows\Fonts\segoeuib.ttf",   # Segoe UI Bold
+    r"C:\Windows\Fonts\arialbd.ttf",    # Arial Bold
+    r"C:\Windows\Fonts\seguisb.ttf",    # Segoe UI Semibold
+    r"C:\Windows\Fonts\segoeui.ttf",
+    r"C:\Windows\Fonts\arial.ttf",
+)
+
+
+@lru_cache(maxsize=8)
+def _font(size: int):
+    from PIL import ImageFont
+
+    for path in _FONT_CANDIDATES:
+        try:
+            if os.path.exists(path):
+                return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _level_color(reading: Reading) -> tuple[int, int, int, int]:
+    """Green (>=50) -> orange (>=20) -> red (<20); blue while charging."""
+    if reading.percent is not None and reading.charging:
+        return (66, 165, 245, 255)      # blue
+    pct = reading.percent
+    if pct is None:
+        return (176, 176, 176, 255)     # grey ("??")
+    if pct >= 50:
+        return (76, 200, 112, 255)      # green
+    if pct >= 20:
+        return (240, 170, 40, 255)      # orange
+    return (232, 72, 72, 255)           # red
+
+
 def _make_icon_image(reading: Reading):
-    """Draw a tiny battery glyph coloured by charge level."""
+    """Render the battery percentage as a colour-coded number, like a badge.
+
+    Shows ``??`` when there is no reading (dongle unplugged or mouse asleep past
+    the grace window). A dark outline keeps the digits legible on a light
+    taskbar; the bright fill keeps them legible on a dark one.
+    """
     from PIL import Image, ImageDraw
 
-    size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    S = 64
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    pct = reading.percent
-    if not reading.device_present or pct is None:
-        fill = (128, 128, 128, 255)
-        level = 0.0
+    if not reading.device_present or reading.percent is None:
+        text = "??"
     else:
-        level = max(0.0, min(1.0, pct / 100.0))
-        if reading.charging:
-            fill = (60, 160, 255, 255)
-        elif pct <= 5:
-            fill = (230, 60, 60, 255)
-        elif pct <= 20:
-            fill = (240, 170, 40, 255)
-        else:
-            fill = (70, 200, 110, 255)
+        text = str(max(0, min(100, reading.percent)))
 
-    # Battery body + terminal.
-    body = (8, 20, 50, 44)
-    d.rounded_rectangle(body, radius=6, outline=(230, 230, 230, 255), width=4)
-    d.rectangle((50, 28, 56, 36), fill=(230, 230, 230, 255))
-
-    inner_l, inner_t, inner_r, inner_b = 13, 25, 45, 39
-    width = int((inner_r - inner_l) * level)
-    if width > 0:
-        d.rectangle((inner_l, inner_t, inner_l + width, inner_b), fill=fill)
-    if not reading.device_present or pct is None:
-        d.line((14, 26, 44, 38), fill=(230, 90, 90, 255), width=3)
+    # Shrink the font for wider strings ("100") so it always fits the box.
+    size = 60 if len(text) <= 2 else 44
+    font = _font(size)
+    d.text(
+        (S / 2, S / 2), text,
+        font=font, fill=_level_color(reading), anchor="mm",
+        stroke_width=3, stroke_fill=(0, 0, 0, 190),
+    )
     return img
 
 

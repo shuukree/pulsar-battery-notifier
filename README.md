@@ -24,7 +24,9 @@ a gentle nudge at 20%, and a hard-to-ignore critical alert at 5% and 1%.
   reading jumped (e.g. 22% → 4% → single "very low" toast, not four).
 - Re-arms automatically when you charge back up.
 - Never alerts while the mouse is charging.
-- Tray icon showing current % / charging / "last known" state.
+- Tray icon shows the **battery % as a colour-coded number** — green (≥50),
+  orange (≥20), red (<20), blue while charging, and `??` when there's no reading.
+  Updates live and adapts to light/dark taskbars.
 - Config is a plain JSON file you can hand-edit; reload from the tray.
 - **Built-in updater**: checks GitHub for new releases in the background and
   offers a one-click **Check for updates** in the tray menu that downloads and
